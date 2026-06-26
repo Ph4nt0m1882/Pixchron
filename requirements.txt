@@ -1,0 +1,9 @@
+torch
+torchvision
+diffusers
+transformers
+accelerate
+datasets
+pillow
+numpy
+tqdm

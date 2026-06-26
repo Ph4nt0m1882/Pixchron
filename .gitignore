@@ -1,0 +1,34 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Machine Learning / HuggingFace
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+models/
+checkpoints/
+
+# Logs and TensorBoard
+logs/
+runs/
+wandb/
+
+# Datasets and Cache
+.cache/
+data/
+datasets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
