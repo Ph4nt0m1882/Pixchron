@@ -9,7 +9,7 @@ class PixelArtDataset(Dataset):
     """
     Dataset PyTorch personnalisé pour charger des images Pixel Art avec canal Alpha (RGBA).
     """
-    def __init__(self, hf_dataset_name="Falah/pixel_art", split="train", image_size=64):
+    def __init__(self, hf_dataset_name="huggan/pokemon", split="train", image_size=64):
         print(f"Téléchargement/Chargement du dataset HF : {hf_dataset_name}")
         # Charge le dataset depuis HuggingFace
         self.dataset = load_dataset(hf_dataset_name, split=split)
