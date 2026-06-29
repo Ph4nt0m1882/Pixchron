@@ -1,4 +1,4 @@
-![Header](.github\assets\images\header.jpeg)
+![Header](.github/assets/images/header.jpeg)
 
 # Pixchron: Modèle Fondateur de Génération de Pixel Art
 

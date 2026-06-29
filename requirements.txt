@@ -7,3 +7,4 @@ datasets
 pillow
 numpy
 tqdm
+typing_extensions
