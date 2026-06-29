@@ -17,7 +17,7 @@ class PixelArtAnnotator:
         print(f"Chargement du VLM {model_id} sur {device}...")
         
         # Chargement en bfloat16 pour économiser de la VRAM tout en gardant la précision
-        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
         self.model = LlavaForConditionalGeneration.from_pretrained(
             model_id, 
             torch_dtype=torch.bfloat16, 

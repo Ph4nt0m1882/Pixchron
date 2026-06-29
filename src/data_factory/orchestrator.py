@@ -20,7 +20,7 @@ def run_data_factory(start_page=0, end_page=5, shard_prefix="00"):
     packer = WebDatasetPacker(output_dir="datasets_ready", max_size_mb=1000)
     
     # 2. Traitement en chaîne
-    raw_files = [os.path.join(raw_dir, f) for f in os.listdir(raw_dir) if f.endswith(('.png', '.gif'))]
+    raw_files = [os.path.join(raw_dir, f) for f in os.listdir(raw_dir) if f.endswith(('.png', '.gif', '.jpg', '.jpeg', '.webp'))]
     print(f"\n{len(raw_files)} fichiers bruts à traiter...")
     
     for filepath in raw_files:

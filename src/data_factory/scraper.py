@@ -14,9 +14,8 @@ class OpenGameArtScraper:
         """Scrape la section 2D Art d'OpenGameArt à la recherche de pixel art (PNG/GIF)"""
         print(f"--- Lancement du Scraper OpenGameArt (Pages {start_page} à {end_page}) ---")
         
-        # Regex simple pour trouver les liens vers les fichiers png et gif dans le code source
-        # (Pour un vrai scraping de masse, on utiliserait BeautifulSoup)
-        file_regex = re.compile(r'href="(https?://[^"]+\.(?:png|gif))"')
+        # Regex pour trouver les liens (inclut jpg car OGA utilise des previews en jpg)
+        file_regex = re.compile(r'(?:href|src)=["\']([^"\']+\.(?:png|gif|jpg|jpeg|webp))["\']')
         
         total_downloaded = 0
         
@@ -25,13 +24,18 @@ class OpenGameArtScraper:
             url = f"{self.base_url}/art-search-advanced?keys=&title=&field_art_tags_tid_op=or&field_art_tags_tid=pixel%20art&name=&Sort=created&page={page}"
             
             try:
-                response = requests.get(url, headers={'User-Agent': 'Pixchron-Dataset-Bot/1.0'})
+                # OpenGameArt bloque les User-Agents inconnus (anti-bot), on simule un navigateur standard
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                response = requests.get(url, headers=headers)
                 if response.status_code != 200:
+                    print(f"Erreur HTTP {response.status_code} sur la page {page}")
                     continue
                 
                 # Cherche tous les fichiers png et gif dans le HTML
                 matches = file_regex.findall(response.text)
-                unique_urls = list(set(matches))
+                
+                # Conversion en liens absolus
+                unique_urls = list(set([urljoin(self.base_url, match) for match in matches]))
                 
                 for file_url in unique_urls:
                     if self.download_file(file_url):
@@ -56,7 +60,8 @@ class OpenGameArtScraper:
             
         try:
             print(f"Téléchargement : {filename}")
-            r = requests.get(url, stream=True, headers={'User-Agent': 'Pixchron-Dataset-Bot/1.0'})
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            r = requests.get(url, stream=True, headers=headers)
             if r.status_code == 200:
                 with open(filepath, 'wb') as f:
                     for chunk in r.iter_content(1024):
