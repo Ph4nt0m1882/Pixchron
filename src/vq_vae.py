@@ -115,8 +115,6 @@ class PixelVQVAE(nn.Module):
     def forward(self, x):
         z = self._encoder(x)
         z = self._pre_vq_conv(z)
-        loss, quantized, perplexity, _ = self._vq_vae(z) # Modification temporaire, on a renvoyé (quantized, loss, indices) dans vq_vae
-        # Wait, the return order in VectorQuantizer is: quantized, loss, encoding_indices
         quantized, vq_loss, _ = self._vq_vae(z)
         x_recon = self._decoder(quantized)
         
