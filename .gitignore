@@ -27,6 +27,7 @@ wandb/
 .cache/
 data/
 datasets/
+raw_data_part*
 
 # IDE
 .vscode/
