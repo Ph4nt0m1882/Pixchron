@@ -43,12 +43,15 @@ class AdvancedOpenGameArtScraper:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
                 # Trouver tous les liens vers les fiches d'assets (les noeuds /content/...)
-                # Dans OpenGameArt, les titres des assets dans la liste de recherche ont la classe 'views-field-title'
+                # On cherche tous les liens 'a' dont le href commence par '/content/'
                 node_links = set()
-                for a_tag in soup.select('.views-field-title a'):
-                    href = a_tag.get('href')
-                    if href and href.startswith('/content/'):
+                for a_tag in soup.find_all('a', href=True):
+                    href = a_tag['href']
+                    if href.startswith('/content/'):
                         node_links.add(urljoin(self.base_url, href))
+                
+                if not node_links:
+                    print(f"Aucun lien /content/ trouvé sur la page {page}. Le site a peut-être bloqué la requête.")
                 
                 for node_url in node_links:
                     self._scrape_node(node_url)
