@@ -120,7 +120,7 @@ class HuggingFaceScraper:
         try:
             from datasets import load_dataset
             print(f"--- Lancement HF Scraper sur le dataset {hf_dataset_name} ---")
-            dataset = load_dataset(hf_dataset_name, split=split)
+            dataset = load_dataset(hf_dataset_name, split=split, trust_remote_code=True)
             
             count = 0
             for i, item in enumerate(dataset):

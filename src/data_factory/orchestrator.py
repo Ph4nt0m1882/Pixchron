@@ -21,14 +21,20 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
         print("Source inconnue. Utilisez 'web' ou 'hf'.")
         return
         
+    # Vérification des fichiers avant de charger les IA lourdes
+    raw_files = [os.path.join(raw_dir, f) for f in os.listdir(raw_dir) if f.endswith(('.png', '.gif', '.jpg', '.jpeg', '.webp'))]
+    print(f"\n{len(raw_files)} fichiers bruts à traiter...")
+    
+    if len(raw_files) == 0:
+        print("Aucun fichier à traiter. Arrêt de l'usine.")
+        return
+        
     # Initialisation des composants lourds
     cleaner = PixelArtCleaner(max_colors_allowed=256)
     annotator = PixelArtAnnotator(model_id="llava-hf/llava-1.5-7b-hf", device="cuda")
     packer = WebDatasetPacker(output_dir="datasets_ready", max_size_mb=1000)
     
     # 2. Traitement en chaîne
-    raw_files = [os.path.join(raw_dir, f) for f in os.listdir(raw_dir) if f.endswith(('.png', '.gif'))]
-    print(f"\n{len(raw_files)} fichiers bruts à traiter...")
     
     for filepath in raw_files:
         filename = os.path.basename(filepath)
