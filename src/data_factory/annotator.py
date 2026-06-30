@@ -16,8 +16,12 @@ class PixelArtAnnotator:
         self.device = device
         print(f"Chargement du VLM {model_id} sur {device}...")
         
-        # Chargement en bfloat16 pour économiser de la VRAM tout en gardant la précision
-        self.processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
+        # Pour contourner le bug 'image_token' d'AutoProcessor avec transformers 4.40
+        from transformers import CLIPImageProcessor, AutoTokenizer, LlavaProcessor
+        
+        image_processor = CLIPImageProcessor.from_pretrained(model_id)
+        tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=False)
+        self.processor = LlavaProcessor(image_processor=image_processor, tokenizer=tokenizer)
         self.model = LlavaForConditionalGeneration.from_pretrained(
             model_id, 
             torch_dtype=torch.bfloat16, 
