@@ -5,7 +5,7 @@ from cleaner import PixelArtCleaner
 from annotator import PixelArtAnnotator
 from packer import WebDatasetPacker
 
-def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/pokemon", max_hf_samples=1000, shard_prefix="00"):
+def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/pokemon", max_hf_samples=1000, shard_prefix="00", tsr_console="snes"):
     print(f"=== DÉMARRAGE DE L'USINE À DONNÉES PIXCHRON (Source: {source}) ===")
     
     raw_dir = f"raw_data_part_{shard_prefix}"
@@ -17,8 +17,13 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
     elif source == "hf":
         scraper = HuggingFaceScraper(raw_dir=raw_dir)
         scraper.scrape_dataset(hf_dataset_name=hf_dataset, max_samples=max_hf_samples)
+    elif source == "tsr":
+        # Import retardé pour éviter les erreurs circulaires ou importer si on ne l'utilise pas
+        from scraper import TheSpritersResourceScraper
+        scraper = TheSpritersResourceScraper(raw_dir=raw_dir)
+        scraper.scrape_console(console_name=tsr_console, start_index=start_page, end_index=end_page)
     else:
-        print("Source inconnue. Utilisez 'web' ou 'hf'.")
+        print("Source inconnue. Utilisez 'web', 'hf', ou 'tsr'.")
         return
         
     # Vérification des fichiers avant de charger les IA lourdes
@@ -68,11 +73,12 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Orchestrateur Data Factory Multi-Sources")
-    parser.add_argument("--source", type=str, choices=["web", "hf"], default="web", help="Source de données (web ou hf)")
-    parser.add_argument("--start", type=int, default=0, help="Page de départ du scraping web")
-    parser.add_argument("--end", type=int, default=5, help="Page de fin du scraping web")
+    parser.add_argument("--source", type=str, choices=["web", "hf", "tsr"], default="web", help="Source de données (web, hf, tsr)")
+    parser.add_argument("--start", type=int, default=0, help="Index ou page de départ")
+    parser.add_argument("--end", type=int, default=5, help="Index ou page de fin")
     parser.add_argument("--hf_dataset", type=str, default="nerijs/pixel-art-xl", help="Nom du dataset HuggingFace")
     parser.add_argument("--hf_samples", type=int, default=1000, help="Nombre d'images à extraire de HF")
+    parser.add_argument("--tsr_console", type=str, default="snes", help="Console cible pour TSR (ex: snes, gba)")
     parser.add_argument("--prefix", type=str, default="00", help="Préfixe pour ce worker (évite les conflits de dossiers)")
     args = parser.parse_args()
     
@@ -82,5 +88,6 @@ if __name__ == "__main__":
         end_page=args.end, 
         hf_dataset=args.hf_dataset,
         max_hf_samples=args.hf_samples,
-        shard_prefix=args.prefix
+        shard_prefix=args.prefix,
+        tsr_console=args.tsr_console
     )

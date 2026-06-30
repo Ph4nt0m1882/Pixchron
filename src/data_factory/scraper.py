@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 import zipfile
 from io import BytesIO
 import shutil
+import time
 
 class AdvancedOpenGameArtScraper:
     def __init__(self, raw_dir="raw_data"):
@@ -120,7 +121,7 @@ class HuggingFaceScraper:
         try:
             from datasets import load_dataset
             print(f"--- Lancement HF Scraper sur le dataset {hf_dataset_name} ---")
-            dataset = load_dataset(hf_dataset_name, split=split, trust_remote_code=True)
+            dataset = load_dataset(hf_dataset_name, split=split)
             
             count = 0
             for i, item in enumerate(dataset):
@@ -142,6 +143,88 @@ class HuggingFaceScraper:
                 
         except Exception as e:
             print(f"Erreur HuggingFace Scraper : {e}")
+
+class TheSpritersResourceScraper:
+    def __init__(self, raw_dir="raw_data"):
+        self.base_url = "https://www.spriters-resource.com"
+        self.raw_dir = raw_dir
+        os.makedirs(self.raw_dir, exist_ok=True)
+        self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+    def scrape_console(self, console_name: str, start_index=0, end_index=10):
+        print(f"--- Lancement TSR Scraper ({console_name}, jeux {start_index} à {end_index}) ---")
+        url = f"{self.base_url}/{console_name}/"
+        try:
+            response = requests.get(url, headers=self.headers)
+            if response.status_code != 200:
+                print(f"Erreur d'accès à la console {console_name} (HTTP {response.status_code})")
+                return
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            game_links = []
+            for a_tag in soup.find_all('a', href=True):
+                href = a_tag['href']
+                if href.startswith(f"/{console_name}/") and len(href.split('/')) == 4 and href.endswith('/'):
+                    if len(href.split('/')[2]) > 1:
+                        game_links.append(urljoin(self.base_url, href))
+            
+            seen = set()
+            game_links = [x for x in game_links if not (x in seen or seen.add(x))]
+            
+            print(f"Trouvé {len(game_links)} jeux pour la console {console_name}.")
+            
+            target_games = game_links[start_index:end_index]
+            for game_url in target_games:
+                self._scrape_game(game_url)
+                time.sleep(1) # Politesse envers le serveur
+                
+        except Exception as e:
+            print(f"Erreur TSR Scraper : {e}")
+
+    def _scrape_game(self, game_url: str):
+        try:
+            print(f"Exploration du jeu : {game_url}")
+            response = requests.get(game_url, headers=self.headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            asset_links = set()
+            for a_tag in soup.find_all('a', href=True):
+                if '/asset/' in a_tag['href']:
+                    asset_links.add(urljoin(self.base_url, a_tag['href']))
+            
+            for asset_url in asset_links:
+                self._scrape_asset(asset_url)
+                time.sleep(0.5)
+                
+        except Exception as e:
+            print(f"Erreur lors de l'exploration du jeu {game_url} : {e}")
+
+    def _scrape_asset(self, asset_url: str):
+        try:
+            response = requests.get(asset_url, headers=self.headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            img_url = None
+            for a_tag in soup.find_all('a', href=True):
+                if '/media/assets/' in a_tag['href']:
+                    img_url = urljoin(self.base_url, a_tag['href'])
+                    break
+            
+            if img_url:
+                filename = img_url.split('/')[-1].split('?')[0]
+                filename = f"tsr_{filename}"
+                filepath = os.path.join(self.raw_dir, filename)
+                
+                if not os.path.exists(filepath):
+                    print(f"  Téléchargement sprite : {filename}")
+                    r = requests.get(img_url, headers=self.headers)
+                    if r.status_code == 200:
+                        with open(filepath, 'wb') as f:
+                            f.write(r.content)
+                    else:
+                        print(f"  Échec (HTTP {r.status_code})")
+        except Exception as e:
+            pass 
 
 if __name__ == "__main__":
     # Test local
