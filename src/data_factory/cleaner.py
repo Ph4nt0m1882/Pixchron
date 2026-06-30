@@ -62,14 +62,16 @@ class PixelArtCleaner:
         # 0. Détection des faux pixels (Upscaling brutal sans nettoyage ou Mixels)
         scale = self.detect_pixel_scale(img_array)
         if scale > 1:
-            # L'image a été artificiellement agrandie (ex: pixels de 2x2, 3x3, etc.)
-            # On la réduit à sa "vraie" résolution native pour le dataset !
             new_width = width // scale
             new_height = height // scale
             img = img.resize((new_width, new_height), Image.Resampling.NEAREST)
             img_array = np.array(img)
             width, height = new_width, new_height
             print(f"[{filepath}] Échelle {scale}x détectée. Réduction à la résolution native : {width}x{height}")
+            
+        if width < 4 or height < 4:
+            print(f"REJET: {filepath} est trop petite ({width}x{height}).")
+            return None, None
             
         # 1. Vérification stricte du pixel art (Nombre de couleurs)
         palette_size = self.extract_palette_size(img_array)

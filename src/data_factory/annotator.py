@@ -75,6 +75,8 @@ class PixelArtAnnotator:
             else:
                 json_str = response_text
                 
+            json_str = json_str.replace("\\_", "_") # Fix pour is\_animation (LLaVA markdown bug)
+                
             ai_data = json.loads(json_str)
             
             # Mise à jour des métadonnées avec l'intelligence du VLM

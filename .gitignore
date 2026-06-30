@@ -28,6 +28,8 @@ wandb/
 data/
 datasets/
 raw_data_part*
+datasets_ready/
+temp*.png
 
 # IDE
 .vscode/
