@@ -59,18 +59,23 @@ class PixelArtCleaner:
 
         width, height = img.size
         
-        # 0. Détection des faux pixels (Upscaling brutal sans nettoyage ou Mixels)
+        # 0. Rejet immédiat si l'image est trop petite à la base
+        if width < 4 or height < 4:
+            print(f"REJET: {filepath} est trop petite nativement ({width}x{height}).")
+            return None, None
+            
+        # 1. Détection des faux pixels (Upscaling brutal sans nettoyage ou Mixels)
         scale = self.detect_pixel_scale(img_array)
         if scale > 1:
-            new_width = width // scale
-            new_height = height // scale
+            new_width = max(1, width // scale)
+            new_height = max(1, height // scale)
             img = img.resize((new_width, new_height), Image.Resampling.NEAREST)
             img_array = np.array(img)
             width, height = new_width, new_height
             print(f"[{filepath}] Échelle {scale}x détectée. Réduction à la résolution native : {width}x{height}")
             
         if width < 4 or height < 4:
-            print(f"REJET: {filepath} est trop petite ({width}x{height}).")
+            print(f"REJET: {filepath} est trop petite après réduction ({width}x{height}).")
             return None, None
             
         # 1. Vérification stricte du pixel art (Nombre de couleurs)
