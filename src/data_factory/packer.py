@@ -25,7 +25,11 @@ class WebDatasetPacker:
         bucket_dir = os.path.join(self.output_dir, bucket)
         os.makedirs(bucket_dir, exist_ok=True)
         
-        self.current_tar_path = os.path.join(bucket_dir, f"pixchron_{bucket}_shard_{self.shard_index:06d}.tar")
+        import uuid
+        if not hasattr(self, 'worker_id'):
+            self.worker_id = uuid.uuid4().hex[:6]
+            
+        self.current_tar_path = os.path.join(bucket_dir, f"pixchron_{bucket}_{self.worker_id}_{self.shard_index:06d}.tar")
         self.current_tar = tarfile.open(self.current_tar_path, "w")
         self.current_size = 0
         self.shard_index += 1
