@@ -16,12 +16,8 @@ class PixelArtAnnotator:
         self.device = device
         print(f"Chargement du VLM {model_id} sur {device}...")
         
-        # Pour contourner le bug 'image_token' d'AutoProcessor avec transformers 4.40
-        from transformers import CLIPImageProcessor, AutoTokenizer, LlavaProcessor
-        
-        image_processor = CLIPImageProcessor.from_pretrained(model_id)
-        tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=False)
-        self.processor = LlavaProcessor(image_processor=image_processor, tokenizer=tokenizer)
+        # L'AutoProcessor officiel gère désormais correctement le image_token dans les versions récentes de Transformers (>4.42)
+        self.processor = AutoProcessor.from_pretrained(model_id)
         self.model = LlavaForConditionalGeneration.from_pretrained(
             model_id, 
             torch_dtype=torch.bfloat16, 
