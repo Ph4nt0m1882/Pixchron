@@ -38,8 +38,12 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
         print("Source inconnue. Utilisez 'web', 'hf', 'tsr', 'lospec', 'github' ou 'kaggle'.")
         return
         
-    # Vérification des fichiers avant de charger les IA lourdes
-    raw_files = [os.path.join(raw_dir, f) for f in os.listdir(raw_dir) if f.endswith(('.png', '.gif', '.jpg', '.jpeg', '.webp'))]
+    # Vérification des fichiers (récursivement pour supporter les sous-dossiers comme ceux de Kaggle)
+    raw_files = []
+    for root, _, files in os.walk(raw_dir):
+        for f in files:
+            if f.lower().endswith(('.png', '.gif', '.jpg', '.jpeg', '.webp')):
+                raw_files.append(os.path.join(root, f))
     print(f"\n{len(raw_files)} fichiers bruts à traiter...")
     
     if len(raw_files) == 0:
