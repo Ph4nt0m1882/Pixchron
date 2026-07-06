@@ -226,6 +226,108 @@ class TheSpritersResourceScraper:
         except Exception as e:
             pass 
 
+class LospecScraper:
+    def __init__(self, raw_dir="raw_data"):
+        self.base_url = "https://lospec.com"
+        self.raw_dir = raw_dir
+        os.makedirs(self.raw_dir, exist_ok=True)
+        self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+    def scrape_gallery(self, start_page=1, end_page=5):
+        print(f"--- Lancement Lospec Scraper (Pages {start_page} à {end_page}) ---")
+        for page in range(start_page, end_page):
+            url = f"{self.base_url}/gallery/?page={page}"
+            try:
+                print(f"Lospec: Exploration page {page}...")
+                response = requests.get(url, headers=self.headers)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                for a_tag in soup.find_all('a', href=True):
+                    href = a_tag['href']
+                    if href.startswith('/gallery/') and len(href.split('/')) == 4:
+                        img_page_url = urljoin(self.base_url, href)
+                        self._scrape_image_page(img_page_url)
+                        # DELAI TRES IMPORTANT (Serveur modeste)
+                        time.sleep(3)
+                
+            except Exception as e:
+                print(f"Erreur Lospec Scraper page {page} : {e}")
+
+    def _scrape_image_page(self, url):
+        try:
+            response = requests.get(url, headers=self.headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            img_tag = soup.find('img', id='image') or soup.find('img', class_='image')
+            if not img_tag:
+                for img in soup.find_all('img'):
+                    if 'src' in img.attrs and '/images/' in img['src']:
+                        img_tag = img
+                        break
+                        
+            if img_tag and 'src' in img_tag.attrs:
+                img_url = urljoin(self.base_url, img_tag['src'])
+                filename = f"lospec_{img_url.split('/')[-1].split('?')[0]}"
+                filepath = os.path.join(self.raw_dir, filename)
+                
+                if not os.path.exists(filepath):
+                    print(f"  Téléchargement Lospec : {filename}")
+                    r = requests.get(img_url, headers=self.headers)
+                    if r.status_code == 200:
+                        with open(filepath, 'wb') as f:
+                            f.write(r.content)
+        except Exception as e:
+            pass
+
+class GithubRepoScraper:
+    def __init__(self, raw_dir="raw_data"):
+        self.raw_dir = raw_dir
+        os.makedirs(self.raw_dir, exist_ok=True)
+        
+    def scrape_repo(self, repo_url: str):
+        import subprocess
+        repo_name = repo_url.split('/')[-1].replace('.git', '')
+        print(f"--- Lancement GitHub Scraper sur {repo_name} ---")
+        
+        temp_dir = f"temp_clone_{repo_name}"
+        try:
+            if not os.path.exists(temp_dir):
+                subprocess.run(["git", "clone", "--depth", "1", repo_url, temp_dir], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            count = 0
+            for root, _, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith(('.png', '.gif')):
+                        source_path = os.path.join(root, file)
+                        target_filename = f"github_{repo_name}_{file}"
+                        target_path = os.path.join(self.raw_dir, target_filename)
+                        if not os.path.exists(target_path):
+                            shutil.copy2(source_path, target_path)
+                            count += 1
+            print(f"  -> {count} assets pixel art extraits de {repo_name}")
+        except Exception as e:
+            print(f"Erreur GitHub Scraper : {e}")
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+class KaggleScraper:
+    def __init__(self, raw_dir="raw_data"):
+        self.raw_dir = raw_dir
+        os.makedirs(self.raw_dir, exist_ok=True)
+        
+    def scrape_dataset(self, dataset_name: str):
+        print(f"--- Lancement Kaggle Scraper sur {dataset_name} ---")
+        try:
+            import kaggle
+            kaggle.api.authenticate()
+            print(f"Téléchargement de {dataset_name} depuis Kaggle...")
+            kaggle.api.dataset_download_files(dataset_name, path=self.raw_dir, unzip=True)
+            print("  -> Terminé. Les fichiers ont été extraits dans raw_data.")
+        except Exception as e:
+            print(f"Erreur Kaggle Scraper : {e}")
+            print("Astuce: Avez-vous configuré ~/.kaggle/kaggle.json ?")
+
 if __name__ == "__main__":
     # Test local
     scraper = AdvancedOpenGameArtScraper(raw_dir="src/data_factory/raw_safe_hf")

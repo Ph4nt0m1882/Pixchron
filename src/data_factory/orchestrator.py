@@ -5,7 +5,7 @@ from cleaner import PixelArtCleaner
 from annotator import PixelArtAnnotator
 from packer import WebDatasetPacker
 
-def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/pokemon", max_hf_samples=1000, shard_prefix="00", tsr_console="snes"):
+def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/pokemon", max_hf_samples=1000, shard_prefix="00", tsr_console="snes", github_url="https://github.com/pret/pokeemerald", kaggle_dataset="ebrahimelgazar/pixel-art"):
     print(f"=== DÉMARRAGE DE L'USINE À DONNÉES PIXCHRON (Source: {source}) ===")
     
     raw_dir = f"raw_data_part_{shard_prefix}"
@@ -22,8 +22,20 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
         from scraper import TheSpritersResourceScraper
         scraper = TheSpritersResourceScraper(raw_dir=raw_dir)
         scraper.scrape_console(console_name=tsr_console, start_index=start_page, end_index=end_page)
+    elif source == "lospec":
+        from scraper import LospecScraper
+        scraper = LospecScraper(raw_dir=raw_dir)
+        scraper.scrape_gallery(start_page=start_page, end_page=end_page)
+    elif source == "github":
+        from scraper import GithubRepoScraper
+        scraper = GithubRepoScraper(raw_dir=raw_dir)
+        scraper.scrape_repo(repo_url=github_url)
+    elif source == "kaggle":
+        from scraper import KaggleScraper
+        scraper = KaggleScraper(raw_dir=raw_dir)
+        scraper.scrape_dataset(dataset_name=kaggle_dataset)
     else:
-        print("Source inconnue. Utilisez 'web', 'hf', ou 'tsr'.")
+        print("Source inconnue. Utilisez 'web', 'hf', 'tsr', 'lospec', 'github' ou 'kaggle'.")
         return
         
     # Vérification des fichiers avant de charger les IA lourdes
@@ -73,12 +85,14 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Orchestrateur Data Factory Multi-Sources")
-    parser.add_argument("--source", type=str, choices=["web", "hf", "tsr"], default="web", help="Source de données (web, hf, tsr)")
+    parser.add_argument("--source", type=str, choices=["web", "hf", "tsr", "lospec", "github", "kaggle"], default="web", help="Source de données")
     parser.add_argument("--start", type=int, default=0, help="Index ou page de départ")
     parser.add_argument("--end", type=int, default=5, help="Index ou page de fin")
     parser.add_argument("--hf_dataset", type=str, default="nerijs/pixel-art-xl", help="Nom du dataset HuggingFace")
     parser.add_argument("--hf_samples", type=int, default=1000, help="Nombre d'images à extraire de HF")
     parser.add_argument("--tsr_console", type=str, default="snes", help="Console cible pour TSR (ex: snes, gba)")
+    parser.add_argument("--github_url", type=str, default="https://github.com/pret/pokeemerald", help="URL du dépôt GitHub")
+    parser.add_argument("--kaggle_dataset", type=str, default="ebrahimelgazar/pixel-art", help="Nom du dataset Kaggle")
     parser.add_argument("--prefix", type=str, default="00", help="Préfixe pour ce worker (évite les conflits de dossiers)")
     args = parser.parse_args()
     
@@ -89,5 +103,7 @@ if __name__ == "__main__":
         hf_dataset=args.hf_dataset,
         max_hf_samples=args.hf_samples,
         shard_prefix=args.prefix,
-        tsr_console=args.tsr_console
+        tsr_console=args.tsr_console,
+        github_url=args.github_url,
+        kaggle_dataset=args.kaggle_dataset
     )
