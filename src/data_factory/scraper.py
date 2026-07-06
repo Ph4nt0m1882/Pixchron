@@ -130,6 +130,20 @@ class HuggingFaceScraper:
                     
                 # Certains datasets appellent la colonne 'image', d'autres 'img'
                 img = item.get('image') or item.get('img')
+                
+                # Si le dataset HF contient des URLs au lieu d'objets images intégrés (comme bghira/free-to-use-pixelart)
+                if img is None:
+                    img_url = item.get('full_image_url') or item.get('image_url') or item.get('url')
+                    if img_url and isinstance(img_url, str) and img_url.startswith('http'):
+                        try:
+                            r = requests.get(img_url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+                            if r.status_code == 200:
+                                from PIL import Image
+                                from io import BytesIO
+                                img = Image.open(BytesIO(r.content))
+                        except Exception as e:
+                            print(f"Erreur téléchargement URL HF {img_url} : {e}")
+
                 if img is None:
                     continue
                 
