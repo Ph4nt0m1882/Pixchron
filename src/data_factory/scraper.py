@@ -272,12 +272,11 @@ class LospecScraper:
             response = requests.get(url, headers=self.headers)
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            img_tag = soup.find('img', id='image') or soup.find('img', class_='image')
-            if not img_tag:
-                for img in soup.find_all('img'):
-                    if 'src' in img.attrs and '/images/' in img['src']:
-                        img_tag = img
-                        break
+            img_tag = None
+            for img in soup.find_all('img'):
+                if 'src' in img.attrs and '/gallery/' in img['src'] and '/static/' not in img['src']:
+                    img_tag = img
+                    break
                         
             if img_tag and 'src' in img_tag.attrs:
                 img_url = urljoin(self.base_url, img_tag['src'])
