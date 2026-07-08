@@ -8,9 +8,10 @@ import shutil
 import time
 
 class AdvancedOpenGameArtScraper:
-    def __init__(self, raw_dir="raw_data"):
+    def __init__(self, raw_dir="raw_data", gifs_only=False):
         self.base_url = "https://opengameart.org"
         self.raw_dir = raw_dir
+        self.gifs_only = gifs_only
         os.makedirs(self.raw_dir, exist_ok=True)
         self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
@@ -78,6 +79,8 @@ class AdvancedOpenGameArtScraper:
                 
                 # On ne prend que les PNG, GIF, et ZIP
                 if filename.lower().endswith(('.png', '.gif', '.zip')):
+                    if self.gifs_only and not filename.lower().endswith(('.gif', '.zip')):
+                        continue
                     self.download_asset(file_url, filename)
         except Exception as e:
             print(f"Erreur Noeud {node_url}: {e}")
@@ -110,8 +113,9 @@ class AdvancedOpenGameArtScraper:
         return False
 
 class HuggingFaceScraper:
-    def __init__(self, raw_dir="raw_data"):
+    def __init__(self, raw_dir="raw_data", gifs_only=False):
         self.raw_dir = raw_dir
+        self.gifs_only = gifs_only
         os.makedirs(self.raw_dir, exist_ok=True)
         
     def scrape_dataset(self, hf_dataset_name: str, split="train", max_samples=1000):
@@ -146,12 +150,22 @@ class HuggingFaceScraper:
 
                 if img is None:
                     continue
-                
-                # Le format de nommage inclut l'index pour éviter les conflits
-                filename = f"hf_{hf_dataset_name.replace('/', '_')}_{i:06d}.png"
+                    
+                filename = f"hf_{hf_dataset_name.replace('/', '_')}_{i:06d}"
+                is_gif = getattr(img, "is_animated", False)
+                if self.gifs_only and not is_gif:
+                    continue
+                    
+                filename = filename + (".gif" if is_gif else ".png")
                 filepath = os.path.join(self.raw_dir, filename)
                 
-                img.save(filepath, format="PNG")
+                # Le format de nommage inclut l'index pour éviter les conflits
+                filepath = os.path.join(self.raw_dir, filename)
+                
+                if is_gif:
+                    img.save(filepath, save_all=True)
+                else:
+                    img.save(filepath, format="PNG")
                 print(f"Extrait depuis HF : {filename}")
                 count += 1
                 
@@ -159,9 +173,10 @@ class HuggingFaceScraper:
             print(f"Erreur HuggingFace Scraper : {e}")
 
 class TheSpritersResourceScraper:
-    def __init__(self, raw_dir="raw_data"):
+    def __init__(self, raw_dir="raw_data", gifs_only=False):
         self.base_url = "https://www.spriters-resource.com"
         self.raw_dir = raw_dir
+        self.gifs_only = gifs_only
         os.makedirs(self.raw_dir, exist_ok=True)
         self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
@@ -226,6 +241,8 @@ class TheSpritersResourceScraper:
             
             if img_url:
                 filename = img_url.split('/')[-1].split('?')[0]
+                if self.gifs_only and not filename.lower().endswith('.gif'):
+                    return
                 filename = f"tsr_{filename}"
                 filepath = os.path.join(self.raw_dir, filename)
                 
@@ -241,9 +258,10 @@ class TheSpritersResourceScraper:
             pass 
 
 class LospecScraper:
-    def __init__(self, raw_dir="raw_data"):
+    def __init__(self, raw_dir="raw_data", gifs_only=False):
         self.base_url = "https://lospec.com"
         self.raw_dir = raw_dir
+        self.gifs_only = gifs_only
         os.makedirs(self.raw_dir, exist_ok=True)
         self.headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
@@ -281,6 +299,10 @@ class LospecScraper:
             if img_tag and 'src' in img_tag.attrs:
                 img_url = urljoin(self.base_url, img_tag['src'])
                 filename = f"lospec_{img_url.split('/')[-1].split('?')[0]}"
+                
+                if self.gifs_only and not filename.lower().endswith('.gif'):
+                    return
+                    
                 filepath = os.path.join(self.raw_dir, filename)
                 
                 if not os.path.exists(filepath):
@@ -293,8 +315,9 @@ class LospecScraper:
             pass
 
 class GithubRepoScraper:
-    def __init__(self, raw_dir="raw_data"):
+    def __init__(self, raw_dir="raw_data", gifs_only=False):
         self.raw_dir = raw_dir
+        self.gifs_only = gifs_only
         os.makedirs(self.raw_dir, exist_ok=True)
         
     def scrape_repo(self, repo_url: str):
@@ -310,6 +333,8 @@ class GithubRepoScraper:
             count = 0
             for root, _, files in os.walk(temp_dir):
                 for file in files:
+                    if self.gifs_only and not file.lower().endswith('.gif'):
+                        continue
                     if file.lower().endswith(('.png', '.gif')):
                         source_path = os.path.join(root, file)
                         target_filename = f"github_{repo_name}_{file}"

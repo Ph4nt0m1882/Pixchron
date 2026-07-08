@@ -12,27 +12,27 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
     
     # 1. Scraping
     if source == "web":
-        scraper = AdvancedOpenGameArtScraper(raw_dir=raw_dir)
+        scraper = AdvancedOpenGameArtScraper(raw_dir=raw_dir, gifs_only=gifs_only)
         scraper.scrape_latest_2d_art(start_page=start_page, end_page=end_page)
     elif source == "hf":
-        scraper = HuggingFaceScraper(raw_dir=raw_dir)
+        scraper = HuggingFaceScraper(raw_dir=raw_dir, gifs_only=gifs_only)
         scraper.scrape_dataset(hf_dataset_name=hf_dataset, max_samples=max_hf_samples)
     elif source == "tsr":
         # Import retardé pour éviter les erreurs circulaires ou importer si on ne l'utilise pas
         from scraper import TheSpritersResourceScraper
-        scraper = TheSpritersResourceScraper(raw_dir=raw_dir)
-        scraper.scrape_console(console_name=tsr_console, start_index=start_page, end_index=end_page)
+        scraper = TheSpritersResourceScraper(raw_dir=raw_dir, gifs_only=gifs_only)
+        scraper.scrape_console(console_name=tsr_console, start_index=start_page, end_page=end_page)
     elif source == "lospec":
         from scraper import LospecScraper
-        scraper = LospecScraper(raw_dir=raw_dir)
+        scraper = LospecScraper(raw_dir=raw_dir, gifs_only=gifs_only)
         scraper.scrape_gallery(start_page=start_page, end_page=end_page)
     elif source == "github":
         from scraper import GithubRepoScraper
-        scraper = GithubRepoScraper(raw_dir=raw_dir)
+        scraper = GithubRepoScraper(raw_dir=raw_dir, gifs_only=gifs_only)
         scraper.scrape_repo(repo_url=github_url)
     elif source == "kaggle":
         from scraper import KaggleScraper
-        scraper = KaggleScraper(raw_dir=raw_dir)
+        scraper = KaggleScraper(raw_dir=raw_dir) # Kaggle télécharge un ZIP complet, pas possible de filtrer avant
         scraper.scrape_dataset(dataset_name=kaggle_dataset)
     else:
         print("Source inconnue. Utilisez 'web', 'hf', 'tsr', 'lospec', 'github' ou 'kaggle'.")
