@@ -35,15 +35,15 @@ class WebDatasetPacker:
         self.shard_index += 1
         print(f"Création d'un nouveau Shard WebDataset : {self.current_tar_path}")
 
-    def add_sample(self, image_id: str, image_bytes: bytes, metadata_json_str: str, bucket: str):
+    def add_sample(self, image_id: str, image_bytes: bytes, metadata_json_str: str, bucket: str, extension: str = "png"):
         """
         Ajoute une paire Image+JSON à l'archive .tar en cours.
         """
         if self.current_tar is None or self.current_size >= self.max_size_bytes:
             self._open_new_shard(bucket)
             
-        # Ajout de l'image PNG
-        img_info = tarfile.TarInfo(name=f"{image_id}.png")
+        # Ajout de l'image (PNG ou GIF)
+        img_info = tarfile.TarInfo(name=f"{image_id}.{extension}")
         img_info.size = len(image_bytes)
         self.current_tar.addfile(tarinfo=img_info, fileobj=BytesIO(image_bytes))
         

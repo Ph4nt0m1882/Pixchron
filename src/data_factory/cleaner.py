@@ -51,7 +51,12 @@ class PixelArtCleaner:
 
     def process_image(self, filepath: str, source_url: str = "", license_type: str = "private_train") -> Tuple[Optional[Image.Image], Optional[PixelArtMetadata]]:
         try:
-            img = Image.open(filepath).convert("RGBA")
+            img_raw = Image.open(filepath)
+            is_animated = getattr(img_raw, "is_animated", False)
+            n_frames = getattr(img_raw, "n_frames", 1)
+            
+            # On aplatit sur la 1ère frame pour faire les vérifications de qualité (couleurs, taille)
+            img = img_raw.convert("RGBA")
             img_array = np.array(img)
         except Exception as e:
             print(f"Erreur de lecture de {filepath}: {e}")
@@ -109,8 +114,8 @@ class PixelArtCleaner:
             height=height,
             has_background=not has_background, 
             palette_size=palette_size,
-            is_animation=False,
-            frames=1,
+            is_animation=is_animated,
+            frames=n_frames,
             source_url=source_url
         )
 

@@ -5,7 +5,7 @@ from cleaner import PixelArtCleaner
 from annotator import PixelArtAnnotator
 from packer import WebDatasetPacker
 
-def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/pokemon", max_hf_samples=1000, shard_prefix="00", tsr_console="snes", github_url="https://github.com/pret/pokeemerald", kaggle_dataset="ebrahimelgazar/pixel-art"):
+def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/pokemon", max_hf_samples=1000, shard_prefix="00", tsr_console="snes", github_url="https://github.com/pret/pokeemerald", kaggle_dataset="ebrahimelgazar/pixel-art", gifs_only=False):
     print(f"=== DÉMARRAGE DE L'USINE À DONNÉES PIXCHRON (Source: {source}) ===")
     
     raw_dir = f"raw_data_part_{shard_prefix}"
@@ -42,6 +42,11 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
     raw_files = []
     for root, _, files in os.walk(raw_dir):
         for f in files:
+            if gifs_only and not f.lower().endswith('.gif'):
+                # Suppression immédiate pour libérer l'espace disque si on ne veut que les GIFs
+                os.remove(os.path.join(root, f))
+                continue
+                
             if f.lower().endswith(('.png', '.gif', '.jpg', '.jpeg', '.webp')):
                 raw_files.append(os.path.join(root, f))
     print(f"\n{len(raw_files)} fichiers bruts à traiter...")
@@ -72,17 +77,45 @@ def run_data_factory(source="web", start_page=0, end_page=5, hf_dataset="huggan/
         metadata = annotator.annotate_image(temp_path, metadata)
         
         # C. Empaquetage WebDataset
-        with open(temp_path, "rb") as f:
-            img_bytes = f.read()
+        if metadata.is_animation and filepath.lower().endswith('.gif'):
+            # 1. On lit les octets du GIF original brut
+            with open(filepath, "rb") as f:
+                img_bytes = f.read()
+                
+            packer.add_sample(
+                image_id=filename.split('.')[0], 
+                image_bytes=img_bytes, 
+                metadata_json_str=metadata.to_json(),
+                bucket=metadata.dataset_bucket,
+                extension="gif"
+            )
             
-        packer.add_sample(
-            image_id=filename.split('.')[0], 
-            image_bytes=img_bytes, 
-            metadata_json_str=metadata.to_json(),
-            bucket=metadata.dataset_bucket
-        )
-        
-        os.remove(temp_path)
+            # 2. Et on sauvegarde aussi la Frame 1 isolée (condition)
+            with open(temp_path, "rb") as f:
+                frame1_bytes = f.read()
+                
+            packer.add_sample(
+                image_id=f"{filename.split('.')[0]}_frame1", 
+                image_bytes=frame1_bytes, 
+                metadata_json_str=metadata.to_json(),
+                bucket=metadata.dataset_bucket,
+                extension="png"
+            )
+            os.remove(temp_path)
+            
+        else:
+            # Traitement normal pour les images fixes
+            with open(temp_path, "rb") as f:
+                img_bytes = f.read()
+                
+            packer.add_sample(
+                image_id=filename.split('.')[0], 
+                image_bytes=img_bytes, 
+                metadata_json_str=metadata.to_json(),
+                bucket=metadata.dataset_bucket,
+                extension="png"
+            )
+            os.remove(temp_path)
         
     packer.close()
     print("\n=== USINE À DONNÉES TERMINÉE ===")
@@ -98,6 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("--github_url", type=str, default="https://github.com/pret/pokeemerald", help="URL du dépôt GitHub")
     parser.add_argument("--kaggle_dataset", type=str, default="ebrahimelgazar/pixel-art", help="Nom du dataset Kaggle")
     parser.add_argument("--prefix", type=str, default="00", help="Préfixe pour ce worker (évite les conflits de dossiers)")
+    parser.add_argument("--gifs_only", action="store_true", help="Ne traiter et ne garder QUE les fichiers .gif animés")
     args = parser.parse_args()
     
     run_data_factory(
@@ -109,5 +143,6 @@ if __name__ == "__main__":
         shard_prefix=args.prefix,
         tsr_console=args.tsr_console,
         github_url=args.github_url,
-        kaggle_dataset=args.kaggle_dataset
+        kaggle_dataset=args.kaggle_dataset,
+        gifs_only=args.gifs_only
     )
