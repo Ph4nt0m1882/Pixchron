@@ -5,59 +5,68 @@ import math
 from io import BytesIO
 from PIL import Image
 
-def guess_grid(width, height, total_frames):
-    """
-    Tente de deviner la disposition (colonnes, lignes) de la spritesheet 
-    en cherchant des frames les plus carrées possibles.
-    """
-    best_cols, best_rows = 1, total_frames
-    best_diff = float('inf')
-    
-    # Heuristique : chercher les diviseurs stricts d'abord
-    for cols in range(1, width + 1):
-        if width % cols != 0: continue
-        for rows in range(1, height + 1):
-            if height % rows != 0: continue
-            
-            # La grille doit contenir au moins le nombre de frames (parfois il y a des cases vides à la fin)
-            if total_frames <= cols * rows <= total_frames + (cols - 1):
-                frame_w = width // cols
-                frame_h = height // rows
-                
-                # En pixel art, les frames sont souvent carrées ou avec des ratios simples
-                diff = abs(frame_w - frame_h)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_cols, best_rows = cols, rows
-                    
-    if best_diff == float('inf'):
-        # Fallback basique : ligne ou colonne simple
-        if width >= height:
-            return total_frames, 1
-        else:
-            return 1, total_frames
-            
-    return best_cols, best_rows
+import numpy as np
 
-def slice_spritesheet(img, cols, rows, total_frames):
+def auto_slice_spritesheet(img):
     """
-    Découpe l'image en frames individuelles.
+    Découpe une spritesheet en détectant mathématiquement les lignes transparentes
+    pour trouver la grille parfaite, sans couper les sprites.
     """
-    frame_w = img.width // cols
-    frame_h = img.height // rows
-    frames = []
+    img_array = np.array(img)
+    h, w = img_array.shape[:2]
     
-    count = 0
-    for y in range(rows):
-        for x in range(cols):
-            if count >= total_frames:
-                break
+    # Masque d'opacité
+    if img_array.shape[2] == 4:
+        opaque_mask = img_array[:, :, 3] > 0
+    else:
+        bg_color = img_array[0, 0]
+        opaque_mask = np.any(img_array != bg_color, axis=-1)
+        
+    cols_sum = np.sum(opaque_mask, axis=0)
+    rows_sum = np.sum(opaque_mask, axis=1)
+    
+    def get_valid_divisions(length, proj_sum):
+        valid_divs = []
+        for divs in range(1, min(length, 64) + 1):
+            if length % divs == 0:
+                step = length // divs
+                is_valid = True
+                # On tolère 0 pixel opaque sur la ligne de coupe exacte
+                for k in range(1, divs):
+                    if proj_sum[k * step] > 0:
+                        is_valid = False
+                        break
+                if is_valid:
+                    valid_divs.append(divs)
+        return valid_divs
+        
+    valid_cols = get_valid_divisions(w, cols_sum)
+    valid_rows = get_valid_divisions(h, rows_sum)
+    
+    best_cols = max(valid_cols) if valid_cols else 1
+    best_rows = max(valid_rows) if valid_rows else 1
+    
+    frame_w = w // best_cols
+    frame_h = h // best_rows
+    
+    frames = []
+    for y in range(best_rows):
+        for x in range(best_cols):
             box = (x * frame_w, y * frame_h, (x + 1) * frame_w, (y + 1) * frame_h)
             frame = img.crop(box)
-            frames.append(frame)
-            count += 1
             
-    return frames
+            # Rejet des frames 100% vides
+            frame_arr = np.array(frame)
+            if frame_arr.shape[2] == 4:
+                if np.sum(frame_arr[:, :, 3] > 0) == 0:
+                    continue
+            else:
+                if np.sum(np.any(frame_arr != img_array[0, 0], axis=-1)) == 0:
+                    continue
+                    
+            frames.append(frame)
+            
+    return frames, best_cols, best_rows
 
 def extract_animations(input_dir, output_dir):
     """
@@ -110,11 +119,11 @@ def extract_animations(input_dir, output_dir):
                             
                             img = Image.open(BytesIO(img_file.read())).convert("RGBA")
                             
-                            # Découpage
-                            cols, rows = guess_grid(img.width, img.height, frames_count)
-                            frames = slice_spritesheet(img, cols, rows, frames_count)
+                            # Découpage par vision par ordinateur
+                            frames, cols, rows = auto_slice_spritesheet(img)
                             
-                            if frames:
+                            if len(frames) > 1:
+                                real_frames_count = len(frames)
                                 # Sauvegarde pour revue manuelle
                                 prefix = f"{os.path.basename(tar_path).split('.')[0]}_{base}"
                                 
@@ -134,10 +143,12 @@ def extract_animations(input_dir, output_dir):
                                 )
                                 
                                 # Enrichissement de la description pour le contrôle de l'IA (Image-to-Animation)
-                                duration_seconds = frames_count * 0.1 # 10 FPS par défaut
+                                duration_seconds = real_frames_count * 0.1 # 10 FPS par défaut
                                 action = "l'action" # Idéalement extrait de la description, ou générique
-                                anim_prompt = f" Animation sur {frames_count} frames sur {duration_seconds:.1f} secondes."
+                                anim_prompt = f" Animation sur {real_frames_count} frames sur {duration_seconds:.1f} secondes."
                                 
+                                # On met à jour le nombre réel de frames
+                                metadata['frames'] = real_frames_count
                                 # On ajoute la consigne à la fin de la description existante
                                 metadata['description'] = metadata.get('description', '') + anim_prompt
                                 
@@ -147,7 +158,7 @@ def extract_animations(input_dir, output_dir):
                                     json.dump(metadata, jf, indent=2)
                                     
                                 extracted_count += 1
-                                print(f"  -> Extrait : {prefix} ({cols}x{rows} grid, {frames_count} frames)")
+                                print(f"  -> Extrait : {prefix} ({cols}x{rows} grid, {real_frames_count} frames trouvées)")
                                 
         except Exception as e:
             print(f"Erreur sur l'archive {tar_path}: {e}")
