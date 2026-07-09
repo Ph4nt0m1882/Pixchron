@@ -40,10 +40,8 @@ class PixelArtAnnotator:
         prompt = (
             "USER: <image>\n"
             "You are an expert video game pixel artist. Analyze this image. "
-            "1. Describe the character, object, or scene in high detail (colors, style, action). "
-            "2. Determine if this image is a sprite sheet (a grid of multiple animation frames). "
-            "3. If it is a sprite sheet, count the exact number of frames. "
-            "Respond strictly with a valid JSON containing three keys: 'description' (string), 'is_animation' (boolean), and 'frames' (integer).\n"
+            "Describe the character, object, or scene in high detail (colors, style, action). "
+            "Respond strictly with a valid JSON containing one key: 'description' (string).\n"
             "ASSISTANT:"
         )
 
@@ -77,8 +75,6 @@ class PixelArtAnnotator:
             
             # Mise à jour des métadonnées avec l'intelligence du VLM
             metadata.description = ai_data.get("description", "No description")
-            metadata.is_animation = ai_data.get("is_animation", False)
-            metadata.frames = ai_data.get("frames", 1)
             
             print(f"[{image_path}] Annoté avec succès : {metadata.is_animation} | {metadata.frames} frames")
         except json.JSONDecodeError:
