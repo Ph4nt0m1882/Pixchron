@@ -9,3 +9,5 @@ numpy
 tqdm
 typing_extensions
 beautifulsoup4
+transformers
+accelerate
