@@ -2,6 +2,7 @@ import sqlite3
 import json
 import time
 import os
+import re
 import torch
 from transformers import pipeline
 
@@ -10,7 +11,7 @@ MODEL_NAME = 'Qwen/Qwen3.6-35B-A3B' # Latest version, needs ~70GB VRAM in bf16/f
 
 SYSTEM_PROMPT = """You are a Pixel Art Art Director.
 You will be given an English word. Your task is to evaluate its importance and relevance for training a Pixel Art Video Game Machine Learning Model.
-Respond ONLY with a valid JSON object in the exact following format, without any markdown formatting or extra text:
+Respond ONLY with a valid JSON object in the exact following format. DO NOT include any reasoning, thoughts, or extra text outside the JSON:
 {
   "french_translation": "The direct French translation of the word",
   "pixel_art_score": 1 to 10,
@@ -43,21 +44,26 @@ def evaluate_batch(words_batch, pipe):
         prompts.append(prompt)
         
     print(f"Running inference on batch of {len(prompts)} words...")
-    outputs = pipe(prompts, max_new_tokens=100, do_sample=False, return_full_text=False)
+    outputs = pipe(prompts, max_new_tokens=512, do_sample=False, return_full_text=False)
     
     results = []
     for out in outputs:
-        # out is a list of dicts for each prompt
         text = out[0]['generated_text'].strip()
-        # Clean up if the model wrapped it in markdown
-        if text.startswith('```json'): text = text[7:]
-        if text.endswith('```'): text = text[:-3]
-        try:
-            result = json.loads(text)
-            results.append(result)
-        except Exception as e:
-            print(f"Failed to parse JSON: {text} | Error: {e}")
+        
+        # Robustly extract JSON block even if there is reasoning text
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            json_str = match.group(0)
+            try:
+                result = json.loads(json_str)
+                results.append(result)
+            except Exception as e:
+                print(f"Failed to parse JSON: {json_str} | Error: {e}")
+                results.append(None)
+        else:
+            print(f"No JSON object found in output: {text}")
             results.append(None)
+            
     return results
 
 def run_evaluation(limit=50):
