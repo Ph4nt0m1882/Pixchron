@@ -11,3 +11,4 @@ typing_extensions
 beautifulsoup4
 transformers
 accelerate
+bitsandbytes

@@ -4,7 +4,7 @@ import time
 import os
 import re
 import torch
-from transformers import pipeline
+from transformers import pipeline, BitsAndBytesConfig
 
 DB_PATH = 'master_dictionary.db'
 MODEL_NAME = 'Qwen/Qwen3.6-35B-A3B' # Latest version, needs ~70GB VRAM in bf16/fp16
@@ -25,30 +25,30 @@ Guidelines for score:
 """
 
 def get_pipeline():
-    print(f"Loading {MODEL_NAME} on GPU...")
+    print(f"Loading {MODEL_NAME} on GPU in 8-bit...")
+    quant_config = BitsAndBytesConfig(load_in_8bit=True)
     return pipeline(
         "text-generation",
         model=MODEL_NAME,
-        model_kwargs={"torch_dtype": torch.float16},
+        model_kwargs={"torch_dtype": torch.float16, "quantization_config": quant_config},
         device_map="auto"
     )
 
 def evaluate_batch(words_batch, pipe):
-    prompts = []
+    results = []
     for row_id, word in words_batch:
+        print(f"  -> Evaluating [{word}]...", end=" ", flush=True)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Word: {word}\nOutput JSON:"}
         ]
         prompt = pipe.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        prompts.append(prompt)
         
-    print(f"Running inference on batch of {len(prompts)} words...")
-    outputs = pipe(prompts, max_new_tokens=1024, do_sample=False, return_full_text=False)
-    
-    results = []
-    for out in outputs:
-        text = out[0]['generated_text'].strip()
+        start_time = time.time()
+        # Suppress tokenization warning
+        outputs = pipe(prompt, max_new_tokens=1024, do_sample=False, return_full_text=False, clean_up_tokenization_spaces=False)
+        text = outputs[0]['generated_text'].strip()
+        elapsed = time.time() - start_time
         
         # Remove thinking blocks if present (Qwen A3B style)
         text_no_think = re.sub(r'<think>[\s\S]*?</think>', '', text)
@@ -63,13 +63,14 @@ def evaluate_batch(words_batch, pipe):
                 result = json.loads(json_str)
                 if 'pixel_art_score' in result:
                     results.append(result)
+                    print(f"Success ({elapsed:.1f}s) | Score: {result['pixel_art_score']} | FR: {result.get('french_translation', '')}")
                     parsed = True
                     break
             except Exception:
                 continue
                 
         if not parsed:
-            print(f"Failed to parse JSON from output: {text}")
+            print(f"Failed! ({elapsed:.1f}s) - No valid JSON found.")
             results.append(None)
             
     return results
@@ -104,9 +105,6 @@ def run_evaluation(limit=50):
                     SET french_translation = ?, pixel_art_score = ?, structural_needs = ?, evaluated = 1 
                     WHERE id = ?
                 ''', (french, score, needs, row_id))
-                print(f"  [{word}] -> {french} | Score: {score}")
-            else:
-                print(f"  [{word}] -> Failed.")
         conn.commit()
         
     conn.close()
