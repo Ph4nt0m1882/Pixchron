@@ -3,11 +3,11 @@ import json
 import time
 import os
 import re
+from transformers import pipeline
 import torch
-from transformers import pipeline, BitsAndBytesConfig
 
 DB_PATH = 'master_dictionary.db'
-MODEL_NAME = 'Qwen/Qwen3.6-35B-A3B' # Latest version, needs ~70GB VRAM in bf16/fp16
+MODEL_NAME = 'Qwen/Qwen2.5-32B-Instruct' # Dense model, very stable, needs ~64GB VRAM
 
 SYSTEM_PROMPT = """You are a Pixel Art Art Director.
 You will be given an English word. Your task is to evaluate its importance and relevance for training a Pixel Art Video Game Machine Learning Model.
@@ -25,12 +25,11 @@ Guidelines for score:
 """
 
 def get_pipeline():
-    print(f"Loading {MODEL_NAME} on GPU in 8-bit...")
-    quant_config = BitsAndBytesConfig(load_in_8bit=True)
+    print(f"Loading {MODEL_NAME} natively in pure Float16 (no compression)...")
     return pipeline(
         "text-generation",
         model=MODEL_NAME,
-        model_kwargs={"torch_dtype": torch.float16, "quantization_config": quant_config},
+        model_kwargs={"torch_dtype": torch.float16},
         device_map="auto"
     )
 
