@@ -44,24 +44,32 @@ def evaluate_batch(words_batch, pipe):
         prompts.append(prompt)
         
     print(f"Running inference on batch of {len(prompts)} words...")
-    outputs = pipe(prompts, max_new_tokens=512, do_sample=False, return_full_text=False)
+    outputs = pipe(prompts, max_new_tokens=1024, do_sample=False, return_full_text=False)
     
     results = []
     for out in outputs:
         text = out[0]['generated_text'].strip()
         
-        # Robustly extract JSON block even if there is reasoning text
-        match = re.search(r'\{[\s\S]*\}', text)
-        if match:
-            json_str = match.group(0)
+        # Remove thinking blocks if present (Qwen A3B style)
+        text_no_think = re.sub(r'<think>[\s\S]*?</think>', '', text)
+        
+        # Robustly extract JSON blocks (non-greedy)
+        matches = re.findall(r'\{[\s\S]*?\}', text_no_think)
+        parsed = False
+        
+        # Often the final answer is the last JSON block
+        for json_str in reversed(matches):
             try:
                 result = json.loads(json_str)
-                results.append(result)
-            except Exception as e:
-                print(f"Failed to parse JSON: {json_str} | Error: {e}")
-                results.append(None)
-        else:
-            print(f"No JSON object found in output: {text}")
+                if 'pixel_art_score' in result:
+                    results.append(result)
+                    parsed = True
+                    break
+            except Exception:
+                continue
+                
+        if not parsed:
+            print(f"Failed to parse JSON from output: {text}")
             results.append(None)
             
     return results
