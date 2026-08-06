@@ -3,12 +3,12 @@ import json
 import time
 import os
 import re
-import torch
-from transformers import AutoTokenizer
-from vllm import LLM, SamplingParams
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 DB_PATH = 'master_dictionary.db'
-MODEL_NAME = 'Qwen/Qwen2.5-32B-Instruct' # Dense model, highly intelligent
+MODEL_NAME = 'Qwen/Qwen2.5-32B-Instruct'
+VLLM_API_URL = 'http://localhost:8000/v1/chat/completions'
 
 SYSTEM_PROMPT = """You are a Pixel Art Art Director.
 You will be given an English word. Your task is to evaluate its importance and relevance for training a Pixel Art Video Game Machine Learning Model.
@@ -25,69 +25,39 @@ Guidelines for score:
 - 1-4: Abstract concepts, verbs, adverbs, or things rarely drawn in games (e.g., the, jump, quickly, philosophy)
 """
 
-def get_vllm_engine():
-    num_gpus = torch.cuda.device_count()
-    print(f"Loading {MODEL_NAME} across {num_gpus} GPUs using vLLM...")
+def evaluate_word(row_id, word):
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Word: {word}\nOutput JSON:"}
+    ]
     
-    # vLLM automatically handles memory and tensor parallelism across all available GPUs
-    llm = LLM(
-        model=MODEL_NAME,
-        tensor_parallel_size=num_gpus,
-        dtype="float16",
-        max_model_len=4096, # Keep it reasonable to save VRAM for large batch sizes
-        gpu_memory_utilization=0.90 # Use 90% of VRAM per GPU
-    )
-    return llm
-
-def evaluate_chunk(words_chunk, llm, tokenizer):
-    prompts = []
-    for row_id, word in words_chunk:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Word: {word}\nOutput JSON:"}
-        ]
-        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        prompts.append(prompt)
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "temperature": 0.0,
+        "max_tokens": 1024,
+    }
+    
+    try:
+        response = requests.post(VLLM_API_URL, json=payload, timeout=120)
+        response.raise_for_status()
+        data = response.json()
+        text = data['choices'][0]['message']['content'].strip()
         
-    sampling_params = SamplingParams(
-        temperature=0.0,
-        max_tokens=1024,
-        stop=["<|endoftext|>", "<|im_end|>"]
-    )
-    
-    print(f"\n🚀 Running vLLM on chunk of {len(prompts)} words (Super-fast Parallel Generation)...")
-    start_time = time.time()
-    
-    # vLLM generate() processes the entire list using PagedAttention (infinitely faster than transformers pipeline)
-    outputs = llm.generate(prompts, sampling_params)
-    
-    elapsed = time.time() - start_time
-    print(f"⚡ Chunk processed in {elapsed:.1f} seconds! (~{elapsed/len(prompts):.2f}s per word)")
-    
-    results = []
-    for output in outputs:
-        text = output.outputs[0].text.strip()
-        
-        # Remove thinking blocks if present
         text_no_think = re.sub(r'<think>[\s\S]*?</think>', '', text)
-        
         matches = re.findall(r'\{[\s\S]*?\}', text_no_think)
-        parsed = False
         
         for json_str in reversed(matches):
             try:
                 result = json.loads(json_str)
                 if 'pixel_art_score' in result:
-                    results.append(result)
-                    parsed = True
-                    break
+                    return row_id, word, result
             except Exception:
                 continue
-                
-        if not parsed:
-            results.append(None)
-            
-    return results
+    except Exception as e:
+        print(f"Error evaluating {word}: {e}")
+        
+    return row_id, word, None
 
 def run_evaluation(limit=10000):
     conn = sqlite3.connect(DB_PATH)
@@ -100,16 +70,20 @@ def run_evaluation(limit=10000):
         print("All words evaluated!")
         return
 
-    llm = get_vllm_engine()
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    print(f"🚀 Starting parallel evaluation of {len(words)} words via vLLM API...")
+    start_time = time.time()
     
-    # Process in massive chunks of 500 (vLLM excels at huge parallel batches)
-    chunk_size = 500
-    for i in range(0, len(words), chunk_size):
-        chunk = words[i:i+chunk_size]
-        results = evaluate_chunk(chunk, llm, tokenizer)
+    # We send 100 requests simultaneously to the vLLM server.
+    # vLLM's PagedAttention engine will automatically batch them dynamically on the GPU.
+    max_workers = 100
+    success_count = 0
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(evaluate_word, row_id, word): (row_id, word) for row_id, word in words}
         
-        for (row_id, word), result in zip(chunk, results):
+        for i, future in enumerate(as_completed(futures), 1):
+            row_id, word, result = future.result()
+            
             if result:
                 french = result.get('french_translation', '')
                 score = result.get('pixel_art_score', 1)
@@ -120,15 +94,23 @@ def run_evaluation(limit=10000):
                     SET french_translation = ?, pixel_art_score = ?, structural_needs = ?, evaluated = 1 
                     WHERE id = ?
                 ''', (french, score, needs, row_id))
-                print(f"    [{word}] -> {french} (Score: {score})")
-            else:
-                print(f"    [{word}] -> Failed.")
                 
-        conn.commit()
-        print(f"💾 Saved chunk to database.\n")
-        
+                success_count += 1
+                # Print progress every 50 words
+                if success_count % 50 == 0:
+                    conn.commit()
+                    elapsed = time.time() - start_time
+                    rate = success_count / elapsed
+                    print(f"  -> Progress: {success_count}/{len(words)} | Speed: {rate:.1f} words/sec")
+            else:
+                print(f"  -> Failed to evaluate: {word}")
+
+    # Final commit
+    conn.commit()
     conn.close()
-    print("Evaluation complete.")
+    
+    total_time = time.time() - start_time
+    print(f"\n✅ Evaluation complete! Processed {len(words)} words in {total_time:.1f}s (~{total_time/len(words):.2f}s per word).")
 
 if __name__ == "__main__":
     run_evaluation(limit=10000)
