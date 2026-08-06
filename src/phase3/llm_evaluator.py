@@ -3,11 +3,12 @@ import json
 import time
 import os
 import re
-from transformers import pipeline
 import torch
+from transformers import AutoTokenizer
+from vllm import LLM, SamplingParams
 
 DB_PATH = 'master_dictionary.db'
-MODEL_NAME = 'Qwen/Qwen2.5-32B-Instruct' # Dense model, very stable, needs ~64GB VRAM
+MODEL_NAME = 'Qwen/Qwen2.5-32B-Instruct' # Dense model, highly intelligent
 
 SYSTEM_PROMPT = """You are a Pixel Art Art Director.
 You will be given an English word. Your task is to evaluate its importance and relevance for training a Pixel Art Video Game Machine Learning Model.
@@ -24,30 +25,48 @@ Guidelines for score:
 - 1-4: Abstract concepts, verbs, adverbs, or things rarely drawn in games (e.g., the, jump, quickly, philosophy)
 """
 
-def get_pipeline():
-    print(f"Loading {MODEL_NAME} natively in pure Float16 (no compression)...")
-    return pipeline(
-        "text-generation",
+def get_vllm_engine():
+    num_gpus = torch.cuda.device_count()
+    print(f"Loading {MODEL_NAME} across {num_gpus} GPUs using vLLM...")
+    
+    # vLLM automatically handles memory and tensor parallelism across all available GPUs
+    llm = LLM(
         model=MODEL_NAME,
-        model_kwargs={"torch_dtype": torch.float16},
-        device_map="auto"
+        tensor_parallel_size=num_gpus,
+        dtype="float16",
+        max_model_len=4096, # Keep it reasonable to save VRAM for large batch sizes
+        gpu_memory_utilization=0.90 # Use 90% of VRAM per GPU
     )
+    return llm
 
-def evaluate_batch(words_batch, pipe):
-    results = []
-    for row_id, word in words_batch:
-        print(f"  -> Evaluating [{word}]...", end=" ", flush=True)
+def evaluate_chunk(words_chunk, llm, tokenizer):
+    prompts = []
+    for row_id, word in words_chunk:
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Word: {word}\nOutput JSON:"}
         ]
-        prompt = pipe.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompts.append(prompt)
         
-        start_time = time.time()
-        # Suppress tokenization warning
-        outputs = pipe(prompt, max_new_tokens=1024, do_sample=False, return_full_text=False, clean_up_tokenization_spaces=False)
-        text = outputs[0]['generated_text'].strip()
-        elapsed = time.time() - start_time
+    sampling_params = SamplingParams(
+        temperature=0.0,
+        max_tokens=1024,
+        stop=["<|endoftext|>", "<|im_end|>"]
+    )
+    
+    print(f"\n🚀 Running vLLM on chunk of {len(prompts)} words (Super-fast Parallel Generation)...")
+    start_time = time.time()
+    
+    # vLLM generate() processes the entire list using PagedAttention (infinitely faster than transformers pipeline)
+    outputs = llm.generate(prompts, sampling_params)
+    
+    elapsed = time.time() - start_time
+    print(f"⚡ Chunk processed in {elapsed:.1f} seconds! (~{elapsed/len(prompts):.2f}s per word)")
+    
+    results = []
+    for output in outputs:
+        text = output.outputs[0].text.strip()
         
         # Remove thinking blocks if present
         text_no_think = re.sub(r'<think>[\s\S]*?</think>', '', text)
@@ -60,19 +79,17 @@ def evaluate_batch(words_batch, pipe):
                 result = json.loads(json_str)
                 if 'pixel_art_score' in result:
                     results.append(result)
-                    print(f"Success ({elapsed:.1f}s) | Score: {result['pixel_art_score']} | FR: {result.get('french_translation', '')}")
                     parsed = True
                     break
             except Exception:
                 continue
                 
         if not parsed:
-            print(f"Failed! ({elapsed:.1f}s) - No valid JSON found.")
             results.append(None)
             
     return results
 
-def run_evaluation(limit=50):
+def run_evaluation(limit=10000):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
@@ -83,15 +100,16 @@ def run_evaluation(limit=50):
         print("All words evaluated!")
         return
 
-    pipe = get_pipeline()
+    llm = get_vllm_engine()
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     
-    # Sequential chunks
-    batch_size = 10
-    for i in range(0, len(words), batch_size):
-        batch = words[i:i+batch_size]
-        results = evaluate_batch(batch, pipe)
+    # Process in massive chunks of 500 (vLLM excels at huge parallel batches)
+    chunk_size = 500
+    for i in range(0, len(words), chunk_size):
+        chunk = words[i:i+chunk_size]
+        results = evaluate_chunk(chunk, llm, tokenizer)
         
-        for (row_id, word), result in zip(batch, results):
+        for (row_id, word), result in zip(chunk, results):
             if result:
                 french = result.get('french_translation', '')
                 score = result.get('pixel_art_score', 1)
@@ -102,10 +120,15 @@ def run_evaluation(limit=50):
                     SET french_translation = ?, pixel_art_score = ?, structural_needs = ?, evaluated = 1 
                     WHERE id = ?
                 ''', (french, score, needs, row_id))
+                print(f"    [{word}] -> {french} (Score: {score})")
+            else:
+                print(f"    [{word}] -> Failed.")
+                
         conn.commit()
+        print(f"💾 Saved chunk to database.\n")
         
     conn.close()
     print("Evaluation complete.")
 
 if __name__ == "__main__":
-    run_evaluation(limit=10000) # Run for all words in the DB
+    run_evaluation(limit=10000)
