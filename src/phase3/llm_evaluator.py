@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 DB_PATH = 'master_dictionary.db'
 MODEL_NAME = 'Qwen/Qwen2.5-32B-Instruct'
-VLLM_API_URL = 'http://localhost:8000/v1/chat/completions'
+VLLM_API_URL = 'http://127.0.0.1:8000/v1/chat/completions'
 
 SYSTEM_PROMPT = """You are a Pixel Art Art Director.
 You will be given an English word. Your task is to evaluate its importance and relevance for training a Pixel Art Video Game Machine Learning Model.
@@ -73,10 +73,12 @@ def run_evaluation(limit=10000):
     print(f"🚀 Starting parallel evaluation of {len(words)} words via vLLM API...")
     start_time = time.time()
     
-    # We send 100 requests simultaneously to the vLLM server.
+    # We send 50 requests simultaneously to the vLLM server.
     # vLLM's PagedAttention engine will automatically batch them dynamically on the GPU.
-    max_workers = 100
+    max_workers = 50
     success_count = 0
+    
+    print(f"  [Info] Sending {max_workers} requests in parallel. The first batch might take 1-2 minutes to finish together...")
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(evaluate_word, row_id, word): (row_id, word) for row_id, word in words}
@@ -96,14 +98,16 @@ def run_evaluation(limit=10000):
                 ''', (french, score, needs, row_id))
                 
                 success_count += 1
-                # Print progress every 50 words
-                if success_count % 50 == 0:
+                print(f"  -> [{word}] = {score} / 10 ({french})")
+                
+                # Commit and print speed every 25 words
+                if success_count % 25 == 0:
                     conn.commit()
                     elapsed = time.time() - start_time
                     rate = success_count / elapsed
-                    print(f"  -> Progress: {success_count}/{len(words)} | Speed: {rate:.1f} words/sec")
+                    print(f"\n[PROGRESS] {success_count}/{len(words)} | Speed: {rate:.1f} words/sec\n")
             else:
-                print(f"  -> Failed to evaluate: {word}")
+                print(f"  -> [FAILED] {word}")
 
     # Final commit
     conn.commit()
