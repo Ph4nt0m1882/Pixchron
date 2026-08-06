@@ -34,42 +34,44 @@ def get_pipeline():
     )
 
 def evaluate_batch(words_batch, pipe):
-    results = []
+    prompts = []
     for row_id, word in words_batch:
-        print(f"  -> Evaluating [{word}]...", end=" ", flush=True)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Word: {word}\nOutput JSON:"}
         ]
         prompt = pipe.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompts.append(prompt)
         
-        start_time = time.time()
-        # Suppress tokenization warning
-        outputs = pipe(prompt, max_new_tokens=1024, do_sample=False, return_full_text=False, clean_up_tokenization_spaces=False)
-        text = outputs[0]['generated_text'].strip()
-        elapsed = time.time() - start_time
+    print(f"  -> Evaluating batch of {len(prompts)} words...", end=" ", flush=True)
+    start_time = time.time()
+    
+    # Process the entire batch in parallel on the GPU
+    outputs = pipe(prompts, max_new_tokens=1024, do_sample=False, return_full_text=False, batch_size=len(prompts))
+    elapsed = time.time() - start_time
+    print(f"Done! ({elapsed:.1f}s total, ~{elapsed/len(prompts):.1f}s per word)")
+    
+    results = []
+    for out in outputs:
+        text = out[0]['generated_text'].strip()
         
-        # Remove thinking blocks if present (Qwen A3B style)
+        # Remove thinking blocks if present
         text_no_think = re.sub(r'<think>[\s\S]*?</think>', '', text)
         
-        # Robustly extract JSON blocks (non-greedy)
         matches = re.findall(r'\{[\s\S]*?\}', text_no_think)
         parsed = False
         
-        # Often the final answer is the last JSON block
         for json_str in reversed(matches):
             try:
                 result = json.loads(json_str)
                 if 'pixel_art_score' in result:
                     results.append(result)
-                    print(f"Success ({elapsed:.1f}s) | Score: {result['pixel_art_score']} | FR: {result.get('french_translation', '')}")
                     parsed = True
                     break
             except Exception:
                 continue
                 
         if not parsed:
-            print(f"Failed! ({elapsed:.1f}s) - No valid JSON found.")
             results.append(None)
             
     return results
@@ -87,8 +89,8 @@ def run_evaluation(limit=50):
 
     pipe = get_pipeline()
     
-    # Process in smaller batches
-    batch_size = 10
+    # Process in batches of 5 (fast enough to utilize GPU, small enough to not OOM)
+    batch_size = 5
     for i in range(0, len(words), batch_size):
         batch = words[i:i+batch_size]
         results = evaluate_batch(batch, pipe)
@@ -104,10 +106,13 @@ def run_evaluation(limit=50):
                     SET french_translation = ?, pixel_art_score = ?, structural_needs = ?, evaluated = 1 
                     WHERE id = ?
                 ''', (french, score, needs, row_id))
+                print(f"    [{word}] -> {french} (Score: {score})")
+            else:
+                print(f"    [{word}] -> Failed.")
         conn.commit()
         
     conn.close()
     print("Evaluation complete.")
 
 if __name__ == "__main__":
-    run_evaluation(limit=50) # Just test with 50 for now
+    run_evaluation(limit=10000) # Run for all words in the DB
