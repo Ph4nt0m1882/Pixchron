@@ -13,11 +13,12 @@ def generate_master_plan():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # We only select words that have been evaluated and have a score >= 5
+    # We select all evaluated words, regardless of score. 
+    # Low score words will naturally have a lower quota (score * 3).
     cursor.execute('''
         SELECT english_word, french_translation, category, pixel_art_score, structural_needs
         FROM dictionary
-        WHERE evaluated = 1 AND pixel_art_score >= 5
+        WHERE evaluated = 1
         ORDER BY pixel_art_score DESC
     ''')
     
@@ -25,7 +26,7 @@ def generate_master_plan():
     conn.close()
     
     if not rows:
-        print("No evaluated words found with a score >= 5. Run llm_evaluator.py to score some words.")
+        print("No evaluated words found. Run llm_evaluator.py to score some words.")
         return
         
     master_plan = {
@@ -43,12 +44,15 @@ def generate_master_plan():
         # A score of 5 means fewer images (e.g., 5 targets, so scraper fetches 15)
         base_quota = score * 3
         
+        needs_list = [n.strip() for n in needs.split(',')] if needs else []
+        needs_list = [n for n in needs_list if n.lower() != 'none']
+        
         target = {
             "english_word": eng,
             "french_translation": fr,
             "category": cat,
             "priority_score": score,
-            "structural_needs": [n.strip() for n in needs.split(',')] if needs else [],
+            "structural_needs": needs_list,
             "target_images_quota": base_quota
         }
         master_plan["targets"].append(target)
@@ -56,7 +60,7 @@ def generate_master_plan():
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(master_plan, f, indent=4, ensure_ascii=False)
         
-    print(f"Master plan successfully generated: {OUTPUT_FILE} with {len(rows)} high-priority targets.")
+    print(f"Master plan successfully generated: {OUTPUT_FILE} with {len(rows)} targets.")
 
 if __name__ == "__main__":
     generate_master_plan()
