@@ -26,10 +26,19 @@ def scrape_images():
     session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
     
     with DDGS() as ddgs:
-        for item in dataset:
-            word = item.get("Mot", "")
-            target_count = item.get("Image_Requises", 3) * 3 # On en cherche 3 fois plus pour avoir du déchet
-            
+        # Le fichier JSON a une clé "targets" qui contient la liste
+        targets_list = dataset.get("targets", []) if isinstance(dataset, dict) else dataset
+        
+        for item in targets_list:
+            if isinstance(item, dict):
+                word = item.get("english_word", "")
+                target_count = item.get("target_images_quota", 10) * 3 # On en cherche 3 fois plus
+            elif isinstance(item, str):
+                word = item
+                target_count = 30 # Par défaut si c'est juste une liste de mots
+            else:
+                continue
+                
             if not word:
                 continue
                 
