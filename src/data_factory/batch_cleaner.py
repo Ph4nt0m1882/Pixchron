@@ -3,6 +3,7 @@ import sys
 import time
 import argparse
 import json
+import shutil
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Dict, Any, List, Tuple
@@ -36,12 +37,26 @@ def _clean_worker(task: Tuple[str, str, Dict[str, Any]]) -> Dict[str, Any]:
             max_colors=config.get("max_colors", 256),
             min_native_size=config.get("min_size", 6),
             remove_background=config.get("remove_bg", False),
-            bg_tolerance=config.get("bg_tolerance", 25.0)
+            bg_tolerance=config.get("bg_tolerance", 25.0),
+            strict_mode=config.get("strict", True),
+            max_intra_block_std=config.get("max_intra_std", 18.0),
+            min_psnr=config.get("min_psnr", 24.0),
+            max_mae=config.get("max_mae", 15.0)
         )
         
         cleaned_img, scale, stats = reconstructor.reconstruct(raw_img)
         
         if cleaned_img is None or stats.get("rejected", False):
+            # Si un dossier de quarantaine est défini, copier l'image rejetée
+            quarantine_dir = config.get("quarantine_dir", "")
+            if quarantine_dir and not config.get("dry_run", False):
+                reason = stats.get("reason", "Inconnu")
+                # Nettoyer le motif pour un nom de sous-dossier valide
+                clean_reason_folder = "".join(c if c.isalnum() or c in " _-" else "_" for c in reason[:30]).strip()
+                target_q_dir = os.path.join(quarantine_dir, clean_reason_folder)
+                os.makedirs(target_q_dir, exist_ok=True)
+                shutil.copy2(src_path, os.path.join(target_q_dir, os.path.basename(src_path)))
+
             return {
                 "status": "rejected",
                 "src": src_path,
@@ -57,11 +72,9 @@ def _clean_worker(task: Tuple[str, str, Dict[str, Any]]) -> Dict[str, Any]:
             
             is_anim = stats.get("is_animated", False)
             if is_anim:
-                # Sauvegarder en GIF
                 dst_path_final = dst_path if dst_path.lower().endswith(".gif") else dst_path.rsplit(".", 1)[0] + ".gif"
                 cleaned_img.save(dst_path_final, format="GIF", save_all=True)
             else:
-                # Sauvegarder en PNG RGBA
                 dst_path_final = dst_path if dst_path.lower().endswith(".png") else dst_path.rsplit(".", 1)[0] + ".png"
                 cleaned_img.save(dst_path_final, format="PNG", optimize=True)
                 
@@ -109,11 +122,16 @@ def _clean_worker(task: Tuple[str, str, Dict[str, Any]]) -> Dict[str, Any]:
 def run_batch_clean(
     input_dir: str = "datasets_ready",
     output_dir: str = "datasets_cleaned",
+    quarantine_dir: str = "",
     tolerance: float = 15.0,
     max_colors: int = 256,
     min_size: int = 6,
     remove_bg: bool = False,
     bg_tolerance: float = 25.0,
+    strict: bool = True,
+    max_intra_std: float = 18.0,
+    min_psnr: float = 24.0,
+    max_mae: float = 15.0,
     workers: int = 0,
     dry_run: bool = False,
     sample: int = 0,
@@ -126,24 +144,26 @@ def run_batch_clean(
     if workers <= 0:
         workers = os.cpu_count() or 4
 
-    print("=" * 70)
-    print("  🚀 PIXCHRON - BATCH DATASET CLEANER & PIXEL RECONSTRUCTOR")
-    print("=" * 70)
-    print(f"  • Dossier source    : {input_dir}")
-    print(f"  • Dossier cible     : {output_dir}")
-    print(f"  • Tolérance couleur : {tolerance} (distance RGB)")
-    print(f"  • Palette max       : {max_colors} couleurs")
-    print(f"  • Taille mini       : {min_size}x{min_size} px")
-    print(f"  • Détourage fond    : {'OUI (transparence Alpha)' if remove_bg else 'NON (garder fond nettoyé)'}")
-    print(f"  • Processus cœurs   : {workers} workers")
-    print(f"  • Mode Dry-Run      : {'ACTIVÉ (pas d’écriture disque)' if dry_run else 'DÉSACTIVÉ'}")
-    print("=" * 70)
+    print("=" * 75)
+    print("  🚀 PIXCHRON - BATCH DATASET CLEANER & STRICT PIXEL RECONSTRUCTOR")
+    print("=" * 75)
+    print(f"  • Dossier source      : {input_dir}")
+    print(f"  • Dossier propre      : {output_dir}")
+    if quarantine_dir:
+        print(f"  • Dossier quarantaine : {quarantine_dir} (images rejetées isolées ici)")
+    print(f"  • Mode Strict         : {'ACTIVÉ (Filtre anti-photos/cahier/faux pixel art)' if strict else 'DÉSACTIVÉ'}")
+    print(f"  • Tolérance couleur   : {tolerance} (distance RGB)")
+    print(f"  • Palette max         : {max_colors} couleurs")
+    print(f"  • Taille mini         : {min_size}x{min_size} px")
+    print(f"  • Détourage fond      : {'OUI (transparence Alpha)' if remove_bg else 'NON'}")
+    print(f"  • Processus cœurs     : {workers} workers")
+    print(f"  • Mode Dry-Run        : {'ACTIVÉ (pas d’écriture disque)' if dry_run else 'DÉSACTIVÉ'}")
+    print("=" * 75)
 
     if not os.path.exists(input_dir):
         print(f"❌ Erreur : Le dossier source '{input_dir}' n'existe pas.")
         return
 
-    # 1. Collecter tous les fichiers images
     print("🔍 Scan du répertoire en cours...")
     tasks = []
     config = {
@@ -152,6 +172,11 @@ def run_batch_clean(
         "min_size": min_size,
         "remove_bg": remove_bg,
         "bg_tolerance": bg_tolerance,
+        "strict": strict,
+        "max_intra_std": max_intra_std,
+        "min_psnr": min_psnr,
+        "max_mae": max_mae,
+        "quarantine_dir": quarantine_dir,
         "dry_run": dry_run,
         "save_metadata": save_metadata
     }
@@ -180,7 +205,6 @@ def run_batch_clean(
     total_to_process = len(tasks)
     print(f"\n⚡ Lancement du traitement parallèle avec {workers} processus...\n")
 
-    # 2. Exécution parallèle avec barre de progression
     start_global = time.time()
     results = []
     scale_histogram = {}
@@ -242,11 +266,11 @@ def run_batch_clean(
     total_time = time.time() - start_global
 
     # 3. Rapport de synthèse
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 75)
     print("  📊 RAPPORT DE SYNTHÈSE DU NETTOYAGE PIXCHRON")
-    print("=" * 70)
+    print("=" * 75)
     print(f"  • Total images analysées    : {total_to_process}")
-    print(f"  • Images nettoyées (Valides): {total_cleaned} ({total_cleaned / max(1, total_to_process) * 100:.1f}%)")
+    print(f"  • Images validées (Pur 1:1) : {total_cleaned} ({total_cleaned / max(1, total_to_process) * 100:.1f}%)")
     print(f"  • Images rejetées (Qualité) : {total_rejected} ({total_rejected / max(1, total_to_process) * 100:.1f}%)")
     print(f"  • Erreurs de lecture        : {total_errors}")
     print(f"  • Temps d'exécution total   : {total_time:.2f} s ({total_to_process / max(0.01, total_time):.1f} img/s)")
@@ -263,11 +287,14 @@ def run_batch_clean(
         print(f"    {sc_name:>5} : {count:>5} images ({count / max(1, total_cleaned) * 100:5.1f}%) | {bar}")
 
     if rejection_reasons:
-        print("\n⚠️ Motifs de Rejet :")
+        print("\n🛡️ Motifs de Rejet (Faux Pixel Art Éliminé) :")
         for reason, count in sorted(rejection_reasons.items(), key=lambda x: -x[1]):
             print(f"    - {reason} : {count} occurrences")
 
-    print("=" * 70)
+    if quarantine_dir and total_rejected > 0:
+        print(f"\n📂 Toutes les images rejetées ont été archivées dans : {quarantine_dir}")
+
+    print("=" * 75)
 
     # 4. Sauvegarde du rapport optionnel
     if report_file:
@@ -288,14 +315,19 @@ def run_batch_clean(
         print(f"📄 Rapport JSON détaillé sauvegardé dans : {report_file}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Pixchron Batch Dataset Cleaner")
+    parser = argparse.ArgumentParser(description="Pixchron Batch Dataset Cleaner with Strict Quality Gate")
     parser.add_argument("--input_dir", type=str, default="datasets_ready", help="Répertoire source des images scrappées")
     parser.add_argument("--output_dir", type=str, default="datasets_cleaned", help="Répertoire de sortie des images propres")
+    parser.add_argument("--quarantine_dir", type=str, default="", help="Dossier d'isolation des images rejetées (optionnel)")
     parser.add_argument("--tolerance", type=float, default=15.0, help="Distance RGB pour fusionner les artefacts JPEG (défaut: 15.0)")
     parser.add_argument("--max_colors", type=int, default=256, help="Palette max autorisée avant rejet (défaut: 256)")
     parser.add_argument("--min_size", type=int, default=6, help="Dimension native minimale en pixels (défaut: 6)")
-    parser.add_argument("--remove_bg", action="store_true", help="Convertir automatiquement le fond uni/bruité en canal Alpha transparent")
+    parser.add_argument("--remove_bg", action="store_true", help="Convertir automatiquement le fond en canal Alpha transparent")
     parser.add_argument("--bg_tolerance", type=float, default=25.0, help="Tolérance de détection du fond (défaut: 25.0)")
+    parser.add_argument("--strict", action="store_true", default=True, help="Activer le mode strict anti-faux pixel art (par défaut activé)")
+    parser.add_argument("--no_strict", action="store_false", dest="strict", help="Désactiver le mode strict")
+    parser.add_argument("--max_intra_std", type=float, default=18.0, help="Écart-type max dans les macro-pixels (défaut: 18.0, rejette le grain de papier)")
+    parser.add_argument("--min_psnr", type=float, default=24.0, help="PSNR minimum pour valider une reconstruction (défaut: 24.0 dB)")
     parser.add_argument("--workers", type=int, default=0, help="Nombre de processus parallèles (0 = tous les cœurs CPU)")
     parser.add_argument("--dry_run", action="store_true", help="Analyser et afficher les stats sans écrire sur le disque")
     parser.add_argument("--sample", type=int, default=0, help="Tester uniquement sur les N premières images")
@@ -307,11 +339,15 @@ if __name__ == "__main__":
     run_batch_clean(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
+        quarantine_dir=args.quarantine_dir,
         tolerance=args.tolerance,
         max_colors=args.max_colors,
         min_size=args.min_size,
         remove_bg=args.remove_bg,
         bg_tolerance=args.bg_tolerance,
+        strict=args.strict,
+        max_intra_std=args.max_intra_std,
+        min_psnr=args.min_psnr,
         workers=args.workers,
         dry_run=args.dry_run,
         sample=args.sample,
