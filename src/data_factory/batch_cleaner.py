@@ -39,9 +39,9 @@ def _clean_worker(task: Tuple[str, str, Dict[str, Any]]) -> Dict[str, Any]:
             remove_background=config.get("remove_bg", False),
             bg_tolerance=config.get("bg_tolerance", 25.0),
             strict_mode=config.get("strict", True),
-            max_intra_block_std=config.get("max_intra_std", 18.0),
-            min_psnr=config.get("min_psnr", 24.0),
-            max_mae=config.get("max_mae", 15.0)
+            max_intra_block_std=config.get("max_intra_std", 24.0),
+            min_psnr=config.get("min_psnr", 16.0),
+            max_mae=config.get("max_mae", 18.0)
         )
         
         cleaned_img, scale, stats = reconstructor.reconstruct(raw_img)
@@ -51,7 +51,6 @@ def _clean_worker(task: Tuple[str, str, Dict[str, Any]]) -> Dict[str, Any]:
             quarantine_dir = config.get("quarantine_dir", "")
             if quarantine_dir and not config.get("dry_run", False):
                 reason = stats.get("reason", "Inconnu")
-                # Nettoyer le motif pour un nom de sous-dossier valide
                 clean_reason_folder = "".join(c if c.isalnum() or c in " _-" else "_" for c in reason[:30]).strip()
                 target_q_dir = os.path.join(quarantine_dir, clean_reason_folder)
                 os.makedirs(target_q_dir, exist_ok=True)
@@ -129,9 +128,9 @@ def run_batch_clean(
     remove_bg: bool = False,
     bg_tolerance: float = 25.0,
     strict: bool = True,
-    max_intra_std: float = 18.0,
-    min_psnr: float = 24.0,
-    max_mae: float = 15.0,
+    max_intra_std: float = 24.0,
+    min_psnr: float = 16.0,
+    max_mae: float = 18.0,
     workers: int = 0,
     dry_run: bool = False,
     sample: int = 0,
@@ -232,7 +231,7 @@ def run_batch_clean(
             
             st = res.get("status")
             sc = res.get("scale", 1)
-            scale_str = f"{sc}x"
+            scale_str = f"{sc:.1f}x" if isinstance(sc, float) else f"{sc}x"
             
             if st == "success":
                 total_cleaned += 1
@@ -284,7 +283,7 @@ def run_batch_clean(
     sorted_scales = sorted(scale_histogram.items(), key=lambda x: -x[1])
     for sc_name, count in sorted_scales:
         bar = "█" * int((count / max(1, total_cleaned)) * 30)
-        print(f"    {sc_name:>5} : {count:>5} images ({count / max(1, total_cleaned) * 100:5.1f}%) | {bar}")
+        print(f"    {sc_name:>6} : {count:>5} images ({count / max(1, total_cleaned) * 100:5.1f}%) | {bar}")
 
     if rejection_reasons:
         print("\n🛡️ Motifs de Rejet (Faux Pixel Art Éliminé) :")
@@ -326,8 +325,9 @@ if __name__ == "__main__":
     parser.add_argument("--bg_tolerance", type=float, default=25.0, help="Tolérance de détection du fond (défaut: 25.0)")
     parser.add_argument("--strict", action="store_true", default=True, help="Activer le mode strict anti-faux pixel art (par défaut activé)")
     parser.add_argument("--no_strict", action="store_false", dest="strict", help="Désactiver le mode strict")
-    parser.add_argument("--max_intra_std", type=float, default=18.0, help="Écart-type max dans les macro-pixels (défaut: 18.0, rejette le grain de papier)")
-    parser.add_argument("--min_psnr", type=float, default=24.0, help="PSNR minimum pour valider une reconstruction (défaut: 24.0 dB)")
+    parser.add_argument("--max_intra_std", type=float, default=24.0, help="Écart-type max dans les macro-pixels (défaut: 24.0)")
+    parser.add_argument("--min_psnr", type=float, default=16.0, help="PSNR minimum pour valider une reconstruction (défaut: 16.0 dB)")
+    parser.add_argument("--max_mae", type=float, default=18.0, help="Erreur moyenne absolue max (défaut: 18.0)")
     parser.add_argument("--workers", type=int, default=0, help="Nombre de processus parallèles (0 = tous les cœurs CPU)")
     parser.add_argument("--dry_run", action="store_true", help="Analyser et afficher les stats sans écrire sur le disque")
     parser.add_argument("--sample", type=int, default=0, help="Tester uniquement sur les N premières images")
@@ -348,6 +348,7 @@ if __name__ == "__main__":
         strict=args.strict,
         max_intra_std=args.max_intra_std,
         min_psnr=args.min_psnr,
+        max_mae=args.max_mae,
         workers=args.workers,
         dry_run=args.dry_run,
         sample=args.sample,

@@ -41,8 +41,9 @@ if __name__ == "__main__":
     parser.add_argument("--bg_tolerance", type=float, default=25.0, help="Tolérance pour la détection du fond (défaut: 25.0)")
     parser.add_argument("--strict", action="store_true", default=True, help="Activer le mode strict anti-faux pixel art (activé par défaut)")
     parser.add_argument("--no_strict", action="store_false", dest="strict", help="Désactiver le mode strict")
-    parser.add_argument("--max_intra_std", type=float, default=18.0, help="Écart-type max dans les macro-pixels (défaut: 18.0)")
-    parser.add_argument("--min_psnr", type=float, default=24.0, help="PSNR minimum pour valider une reconstruction (défaut: 24.0 dB)")
+    parser.add_argument("--max_intra_std", type=float, default=24.0, help="Écart-type max dans les macro-pixels (défaut: 24.0)")
+    parser.add_argument("--min_psnr", type=float, default=16.0, help="PSNR minimum pour valider une reconstruction (défaut: 16.0 dB)")
+    parser.add_argument("--max_mae", type=float, default=18.0, help="Erreur moyenne absolue max (défaut: 18.0)")
     parser.add_argument("--workers", type=int, default=0, help="Nombre de processus CPU (0 = automatique)")
     parser.add_argument("--dry_run", action="store_true", help="Analyser sans sauvegarder les fichiers")
     parser.add_argument("--sample", type=int, default=0, help="Nombre d'images max à traiter pour un test rapide")
@@ -63,6 +64,7 @@ if __name__ == "__main__":
         strict=args.strict,
         max_intra_std=args.max_intra_std,
         min_psnr=args.min_psnr,
+        max_mae=args.max_mae,
         workers=args.workers,
         dry_run=args.dry_run,
         sample=args.sample,

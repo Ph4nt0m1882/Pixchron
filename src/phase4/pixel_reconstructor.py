@@ -8,15 +8,13 @@ class PixelReconstructor:
     """
     Moteur de reconstruction et de nettoyage haute précision pour Pixel Art.
     
-    Capacités Anti-'Faux Pixel Art' & Pureté Maximale :
-    1. Détection spectrale de l'échelle d'upscale (macro-pixels) par autocorrélation.
-    2. Calcul du décalage (offset) de phase pour un échantillonnage sous-pixel centré.
-    3. Test de variance intra-blocs : Rejette les photos physiques (papier quadrillé, perles Hama, broderies).
-    4. Test de résidu cyclique (PSNR / MAE) : Rejette les dessins lisses, lignes de cahier et textures réelles.
-    5. Test de gradient d'éclairage : Détecte les ombres et variations de lumière d'appareils photo sur papier.
-    6. Débruitage des artefacts de compression JPEG par clustering de palette.
-    7. Détection de fond solide (ou bruité) et conversion en transparence Alpha.
-    8. Support complet des images statiques (PNG/JPG/WEBP) et des animations (GIF multi-frames).
+    Capacités :
+    1. Détection de fréquence fondamentale de grille par analyse de premier cluster de pics d'autocorrélation.
+    2. Centrage sous-pixel des échantillons pour préserver les outlines 1-px.
+    3. Rejet strict des photos physiques (papier quadrillé, cahier à carreaux, perles Hama, broderies).
+    4. Débruitage de palette de couleurs (fusion des artefacts JPEG).
+    5. Détection de fond uni et conversion optionnelle en transparence Alpha.
+    6. Support des animations GIF et des images statiques.
     """
 
     def __init__(
@@ -27,9 +25,9 @@ class PixelReconstructor:
         remove_background: bool = False,
         bg_tolerance: float = 25.0,
         strict_mode: bool = True,
-        max_intra_block_std: float = 18.0,
-        min_psnr: float = 24.0,
-        max_mae: float = 15.0
+        max_intra_block_std: float = 24.0,
+        min_psnr: float = 16.0,
+        max_mae: float = 20.0
     ):
         self.color_tolerance = color_tolerance
         self.max_colors = max_colors
@@ -41,66 +39,67 @@ class PixelReconstructor:
         self.min_psnr = min_psnr
         self.max_mae = max_mae
 
-    def _detect_grid_scale(self, quantized_array: np.ndarray, max_scale: int = 48) -> int:
+    def _detect_grid_scale(self, quantized_array: np.ndarray, max_scale: int = 48) -> Tuple[float, bool]:
         """
-        Détecte la taille d'un macro-pixel (ex: 2x, 3x, 4x, 8x, 16x) par autocorrélation
-        des profils de gradient horizontal et vertical.
+        Détecte l'échelle fondamentale de la grille en trouvant le PREMIER cluster de pics significatifs.
         """
         gray = np.mean(quantized_array[:, :, :3], axis=-1)
+        h, w = gray.shape
         
-        # Détection des transitions franches (> 15 pour filtrer le micro-bruit)
-        diff_h = np.abs(np.diff(gray, axis=1)) > 15
-        diff_v = np.abs(np.diff(gray, axis=0)) > 15
+        diff_h = np.abs(np.diff(gray, axis=1)) > 10
+        diff_v = np.abs(np.diff(gray, axis=0)) > 10
         
         density_x = np.sum(diff_h, axis=0).astype(float)
         density_y = np.sum(diff_v, axis=1).astype(float)
         
         if len(density_x) < 4 or len(density_y) < 4:
-            return 1
+            return 1.0, True
             
-        # Normalisation (centrage sur 0)
         density_x -= np.mean(density_x)
         density_y -= np.mean(density_y)
         
-        # Autocorrélation 1D
-        autocorr_x = np.correlate(density_x, density_x, mode='full')[len(density_x) - 1:]
-        autocorr_y = np.correlate(density_y, density_y, mode='full')[len(density_y) - 1:]
+        ac_x = np.correlate(density_x, density_x, mode='full')[len(density_x) - 1:]
+        ac_y = np.correlate(density_y, density_y, mode='full')[len(density_y) - 1:]
         
-        max_len = min(max_scale + 1, len(autocorr_x), len(autocorr_y))
-        if max_len < 4:
-            return 1
+        # On ne cherche pas d'échelle plus grande que w // 8
+        effective_max = min(max_scale + 1, len(ac_x), len(ac_y), max(4, min(w, h) // 4))
+        if effective_max < 4:
+            return 1.0, True
             
-        autocorr = autocorr_x[:max_len] + autocorr_y[:max_len]
+        autocorr = ac_x[:effective_max] + ac_y[:effective_max]
         
-        # Recherche du premier pic périodique significatif
-        search_space = autocorr[2:]
-        if len(search_space) == 0:
-            return 1
+        peaks = []
+        for k in range(2, effective_max - 1):
+            val = autocorr[k]
+            left = autocorr[k - 1]
+            right = autocorr[k + 1]
             
-        peak = np.max(search_space)
-        mean_abs = np.mean(np.abs(search_space))
-        
-        if peak < mean_abs * 2.8 or peak <= 0:
-            return 1 # Pas de périodicité macro-pixel claire -> 1x
-            
-        threshold = peak * 0.45
-        best_scale = 1
-        
-        for i in range(1, len(search_space) - 1):
-            val = search_space[i]
-            if val > threshold and val > search_space[i - 1] and val >= search_space[i + 1]:
-                best_scale = i + 2
-                break
+            if val > left and val > right and val > 0:
+                prominence = val - max(left, right)
+                peaks.append((k, val, prominence))
                 
-        if best_scale == 1 and peak > mean_abs * 3.5:
-            best_scale = int(np.argmax(search_space)) + 2
+        if not peaks:
+            return 1.0, True
             
-        return max(1, best_scale)
+        max_peak_val = max(p[1] for p in peaks)
+        significant_peaks = [p for p in peaks if p[1] > 0.25 * max_peak_val]
+        
+        if not significant_peaks:
+            return 1.0, True
+            
+        first_k, first_val, first_prom = significant_peaks[0]
+        
+        if len(significant_peaks) > 1 and significant_peaks[1][0] == first_k + 1:
+            w1 = first_val
+            w2 = significant_peaks[1][1]
+            fractional_k = (first_k * w1 + (first_k + 1) * w2) / (w1 + w2)
+            return float(fractional_k), False
+            
+        return float(first_k), True
 
     def _find_best_offset(self, quantized_array: np.ndarray, scale: int) -> Tuple[int, int]:
         """
-        Trouve le décalage (offset X/Y) pour que l'échantillonnage tombe pile au centre
-        des macro-pixels, évitant ainsi d'amputer les contours noirs d'un pixel de large.
+        Trouve le décalage (offset X/Y) pour que l'échantillonnage tombe au centre des macro-pixels.
         """
         if scale <= 1:
             return 0, 0
@@ -129,10 +128,7 @@ class PixelReconstructor:
 
     def _check_intra_block_variance(self, raw_array: np.ndarray, scale: int, ox: int, oy: int) -> float:
         """
-        Calcule l'écart-type moyen des couleurs à l'intérieur de chaque macro-pixel.
-        
-        En vrai pixel art upscalé : intra_block_std < 5-10 (couleurs unies, léger bruit JPEG).
-        Sur une photo de dessin sur papier/perles : intra_block_std > 20-50 (grain de papier, feutre, lumière).
+        Mesure l'écart-type moyen à l'intérieur des macro-pixels.
         """
         if scale <= 1:
             return 0.0
@@ -140,12 +136,10 @@ class PixelReconstructor:
         h, w = raw_array.shape[:2]
         rgb = raw_array[:, :, :3].astype(float)
         
-        # Découpage en blocs de scale x scale
         stds = []
         for y in range(oy, h - scale + 1, scale):
             for x in range(ox, w - scale + 1, scale):
                 block = rgb[y:y + scale, x:x + scale]
-                # Écart-type moyen sur les 3 canaux dans ce bloc
                 block_std = np.mean(np.std(block, axis=(0, 1)))
                 stds.append(block_std)
                 
@@ -156,11 +150,7 @@ class PixelReconstructor:
 
     def _check_roundtrip_residual(self, raw_array: np.ndarray, downscaled_array: np.ndarray, scale: int, ox: int, oy: int) -> Tuple[float, float]:
         """
-        Reconstruit l'image par Nearest Neighbor et compare avec l'image d'origine.
-        Retourne (MAE, PSNR).
-        
-        Sur vrai pixel art : MAE < 8, PSNR > 30 dB.
-        Sur photo de cahier/papier ou dessin lisse : MAE > 20, PSNR < 22 dB (perte massive du quadrillage imprimé/grain).
+        Vérifie la fidélité de reconstruction cyclique (MAE & PSNR).
         """
         if scale <= 1:
             return 0.0, 99.0
@@ -168,7 +158,6 @@ class PixelReconstructor:
         down_h, down_w = downscaled_array.shape[:2]
         orig_h, orig_w = raw_array.shape[:2]
         
-        # Zone correspondante dans l'image d'origine
         crop_h = min(orig_h - oy, down_h * scale)
         crop_w = min(orig_w - ox, down_w * scale)
         
@@ -177,7 +166,6 @@ class PixelReconstructor:
             
         orig_crop = raw_array[oy:oy + crop_h, ox:ox + crop_w, :3].astype(float)
         
-        # Upscale nearest neighbor
         up_img = Image.fromarray(downscaled_array).resize((down_w * scale, down_h * scale), Image.Resampling.NEAREST)
         up_arr = np.array(up_img)[:crop_h, :crop_w, :3].astype(float)
         
@@ -188,110 +176,18 @@ class PixelReconstructor:
         psnr = 10.0 * math.log10((255.0 ** 2) / (mse + 1e-6)) if mse > 0 else 99.0
         return mae, psnr
 
-    def _check_illumination_gradient(self, raw_array: np.ndarray) -> float:
-        """
-        Mesure la variation d'éclairage globale entre les 4 coins de l'image.
-        Sur une photo de feuille de papier, l'éclairage ambiant crée un gradient continu important (> 40).
-        En vrai pixel art, les coins d'un même fond ont une luminosité quasi-identique.
-        """
-        gray = np.mean(raw_array[:, :, :3].astype(float), axis=-1)
-        h, w = gray.shape
-        
-        corner_tl = np.mean(gray[:max(2, h//10), :max(2, w//10)])
-        corner_tr = np.mean(gray[:max(2, h//10), -max(2, w//10):])
-        corner_bl = np.mean(gray[-max(2, h//10):, :max(2, w//10)])
-        corner_br = np.mean(gray[-max(2, h//10):, -max(2, w//10):])
-        
-        corners = [corner_tl, corner_tr, corner_bl, corner_br]
-        max_diff = float(max(corners) - min(corners))
-        return max_diff
-
-    def _crop_watermarks(self, quantized_array: np.ndarray, scale: int, ox: int, oy: int, downscaled_array: np.ndarray) -> np.ndarray:
-        """
-        Rogne les bordures contenant du texte (haute densité de bords anormale pour du pixel art).
-        """
-        if scale <= 1 or downscaled_array.shape[0] < 8 or downscaled_array.shape[1] < 8:
-            return downscaled_array
-            
-        gray = np.mean(quantized_array[:, :, :3], axis=-1)
-        diff_h = np.abs(np.diff(gray, axis=1)) > 15
-        diff_v = np.abs(np.diff(gray, axis=0)) > 15
-        
-        edges_per_row = np.sum(diff_h, axis=1)
-        edges_per_col = np.sum(diff_v, axis=0)
-        
-        median_edges_row = np.median(edges_per_row)
-        median_edges_col = np.median(edges_per_col)
-        
-        max_edges_row = max(median_edges_row * 3.5, (quantized_array.shape[1] // scale) * 4.0)
-        max_edges_col = max(median_edges_col * 3.5, (quantized_array.shape[0] // scale) * 4.0)
-        
-        bx = (ox - scale // 2) % scale
-        by = (oy - scale // 2) % scale
-        
-        valid_rows = []
-        for i in range(downscaled_array.shape[0]):
-            r_start = max(0, min(quantized_array.shape[0], by + i * scale))
-            r_end = max(0, min(quantized_array.shape[0], by + (i + 1) * scale))
-            if r_start >= r_end:
-                valid_rows.append(False)
-            else:
-                valid_rows.append(bool(np.max(edges_per_row[r_start:r_end]) <= max_edges_row))
-                
-        valid_cols = []
-        for j in range(downscaled_array.shape[1]):
-            c_start = max(0, min(quantized_array.shape[1], bx + j * scale))
-            c_end = max(0, min(quantized_array.shape[1], bx + (j + 1) * scale))
-            if c_start >= c_end:
-                valid_cols.append(False)
-            else:
-                valid_cols.append(bool(np.max(edges_per_col[c_start:c_end]) <= max_edges_col))
-                
-        def get_largest_true_block(mask):
-            max_len, best_start, best_end = 0, 0, 0
-            curr_start = -1
-            curr_len = 0
-            for idx, val in enumerate(mask):
-                if val:
-                    if curr_start == -1:
-                        curr_start = idx
-                    curr_len += 1
-                else:
-                    if curr_len > max_len:
-                        max_len = curr_len
-                        best_start = curr_start
-                        best_end = idx
-                    curr_start = -1
-                    curr_len = 0
-            if curr_len > max_len:
-                max_len = curr_len
-                best_start = curr_start
-                best_end = len(mask)
-            return best_start, best_end
-            
-        r1, r2 = get_largest_true_block(valid_rows)
-        c1, c2 = get_largest_true_block(valid_cols)
-        
-        if (r2 - r1) < self.min_native_size or (c2 - c1) < self.min_native_size:
-            return downscaled_array
-            
-        return downscaled_array[r1:r2, c1:c2]
-
     def _clean_colors(self, img_array: np.ndarray) -> np.ndarray:
         """
         Débruite la palette de couleurs en regroupant les nuances proches (artefacts JPEG).
-        Préserve la transparence Alpha.
         """
         h, w, c = img_array.shape
         pixels = img_array.reshape(-1, c)
         
-        # Nettoyer les pixels quasi-transparents
         if c == 4:
             transparent_mask = pixels[:, 3] < 20
             pixels[transparent_mask] = [0, 0, 0, 0]
             
         unique_colors, counts = np.unique(pixels, axis=0, return_counts=True)
-        
         sorted_indices = np.argsort(-counts)
         unique_colors = unique_colors[sorted_indices]
         
@@ -309,7 +205,6 @@ class PixelReconstructor:
                     continue
                     
                 rgb_dist = np.linalg.norm(color[:3].astype(float) - p_color[:3].astype(float))
-                
                 alpha_close = True
                 if c == 4:
                     alpha_close = abs(int(color[3]) - int(p_color[3])) < 30
@@ -328,8 +223,7 @@ class PixelReconstructor:
 
     def _handle_background(self, img_array: np.ndarray) -> Tuple[np.ndarray, bool]:
         """
-        Détecte si l'image possède un arrière-plan uni ou semi-uni (avec bruit)
-        et le convertit proprement en canal Alpha transparent si remove_background=True.
+        Détecte et convertit les fonds solides en transparence Alpha.
         """
         h, w, c = img_array.shape
         if c == 3:
@@ -361,9 +255,9 @@ class PixelReconstructor:
             
         return img_array, has_solid_bg
 
-    def reconstruct_frame(self, frame_img: Image.Image) -> Tuple[Optional[Image.Image], int, Dict[str, Any]]:
+    def reconstruct_frame(self, frame_img: Image.Image) -> Tuple[Optional[Image.Image], float, Dict[str, Any]]:
         """
-        Traite, inspecte et nettoie une frame individuelle avec filtrage strict anti-faux pixel art.
+        Traite une frame avec détection d'échelle fondamentale et filtrage qualité.
         """
         has_alpha = frame_img.mode in ('RGBA', 'LA') or (frame_img.mode == 'P' and 'transparency' in frame_img.info)
         
@@ -372,73 +266,80 @@ class PixelReconstructor:
             raw_array = np.array(img)
             bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
             alpha_composite = Image.alpha_composite(bg, img).convert("RGB")
-            quantized = alpha_composite.quantize(colors=16, method=Image.Quantize.MEDIANCUT)
+            quantized = alpha_composite.quantize(colors=32, method=Image.Quantize.MEDIANCUT)
         else:
             img = frame_img.convert("RGB")
             raw_array = np.array(img)
-            quantized = img.quantize(colors=16, method=Image.Quantize.MEDIANCUT)
+            quantized = img.quantize(colors=32, method=Image.Quantize.MEDIANCUT)
             
         quantized_array = np.array(quantized.convert("RGB"))
         orig_w, orig_h = img.size
         
         if orig_w < self.min_native_size or orig_h < self.min_native_size:
-            return None, 1, {"rejected": True, "reason": f"Image trop petite ({orig_w}x{orig_h})"}
+            return None, 1.0, {"rejected": True, "reason": f"Image trop petite ({orig_w}x{orig_h})", "original_size": (orig_w, orig_h)}
             
-        # 1. Détection de l'échelle et de l'offset
-        scale = self._detect_grid_scale(quantized_array)
-        offset_x, offset_y = self._find_best_offset(quantized_array, scale)
+        # 1. Détection de l'échelle fondamentale
+        scale, is_integer = self._detect_grid_scale(quantized_array)
+        int_scale = int(round(scale))
         
-        # 2. FILTRAGE STRICT ANTI-FAUX PIXEL ART (Photos de cahier / Perles / Dessins physiques)
-        if self.strict_mode and scale > 1:
-            # A. Test de variance intra-blocs (les cases sont-elles plates ou texturées de papier ?)
-            intra_std = self._check_intra_block_variance(raw_array, scale, offset_x, offset_y)
+        # Garde-fou : si le downscaling produit une image trop petite (< min_native_size), considérer comme 1x
+        if orig_w / max(1.0, scale) < self.min_native_size or orig_h / max(1.0, scale) < self.min_native_size:
+            scale = 1.0
+            int_scale = 1
+            is_integer = True
+
+        # 2. Test anti-photos physique (cahier à carreaux)
+        if self.strict_mode and int_scale > 1:
+            ox, oy = self._find_best_offset(quantized_array, int_scale)
+            intra_std = self._check_intra_block_variance(raw_array, int_scale, ox, oy)
             if intra_std > self.max_intra_block_std:
                 return None, scale, {
                     "rejected": True,
-                    "reason": f"Faux pixel art (Photo/Papier/Texture détectée : variance intra-cases = {intra_std:.1f} > {self.max_intra_block_std})"
+                    "reason": f"Faux pixel art (Photo/Papier : variance intra-cases = {intra_std:.1f} > {self.max_intra_block_std})",
+                    "original_size": (orig_w, orig_h)
                 }
-                
-            # B. Test de gradient d'éclairage (éclairage inégal d'appareil photo sur feuille)
-            grad_diff = self._check_illumination_gradient(raw_array)
-            if grad_diff > 65.0 and not has_alpha:
-                return None, scale, {
-                    "rejected": True,
-                    "reason": f"Faux pixel art (Photo avec éclairage/ombres inégales sur feuille : delta = {grad_diff:.1f})"
-                }
-        
-        # 3. Échantillonnage centré
-        if scale > 1:
-            downscaled_array = raw_array[offset_y::scale, offset_x::scale]
-            downscaled_array = self._crop_watermarks(quantized_array, scale, offset_x, offset_y, downscaled_array)
+        else:
+            ox, oy = 0, 0
+
+        # 3. Échantillonnage centré ou resampling
+        if is_integer and int_scale > 1:
+            ox, oy = self._find_best_offset(quantized_array, int_scale)
+            downscaled_array = raw_array[oy::int_scale, ox::int_scale]
+        elif not is_integer and scale > 1.5:
+            nat_w = max(self.min_native_size, int(round(orig_w / scale)))
+            nat_h = max(self.min_native_size, int(round(orig_h / scale)))
+            resampled = img.resize((nat_w, nat_h), Image.Resampling.LANCZOS)
+            downscaled_array = np.array(resampled)
         else:
             downscaled_array = raw_array
             
         new_h, new_w = downscaled_array.shape[:2]
         if new_w < self.min_native_size or new_h < self.min_native_size:
-            return None, scale, {"rejected": True, "reason": f"Résolution native trop basse ({new_w}x{new_h})"}
+            return None, scale, {"rejected": True, "reason": f"Résolution native trop basse ({new_w}x{new_h})", "original_size": (orig_w, orig_h)}
             
-        # C. Test de résidu cyclique (Round-Trip PSNR / MAE)
-        if self.strict_mode and scale > 1:
-            mae, psnr = self._check_roundtrip_residual(raw_array, downscaled_array, scale, offset_x, offset_y)
+        # 4. Test de résidu cyclique (uniquement pour les échelles entières nettes)
+        if self.strict_mode and is_integer and int_scale > 1:
+            mae, psnr = self._check_roundtrip_residual(raw_array, downscaled_array, int_scale, ox, oy)
             if psnr < self.min_psnr or mae > self.max_mae:
                 return None, scale, {
                     "rejected": True,
-                    "reason": f"Faux pixel art (Résidu de reconstruction élevé : MAE={mae:.1f}, PSNR={psnr:.1f}dB, lignes de cahier ou dessin lisse)"
+                    "reason": f"Faux pixel art (Résidu élevé : MAE={mae:.1f}, PSNR={psnr:.1f}dB)",
+                    "original_size": (orig_w, orig_h)
                 }
             
-        # 4. Débruitage des couleurs JPEG
+        # 5. Débruitage des couleurs JPEG
         cleaned_array = self._clean_colors(downscaled_array)
         
-        # 5. Gestion du fond / Transparence
+        # 6. Gestion du fond / Transparence
         cleaned_array, has_bg = self._handle_background(cleaned_array)
         
-        # 6. Vérification du nombre de couleurs (Rejet des photos / peintures lisses)
+        # 7. Vérification de la palette (uniquement sur 1x non downscalé)
         unique_colors_cnt = len(np.unique(cleaned_array.reshape(-1, cleaned_array.shape[-1]), axis=0))
-        
-        if unique_colors_cnt > self.max_colors:
+        if unique_colors_cnt > self.max_colors and is_integer and int_scale == 1:
             return None, scale, {
                 "rejected": True, 
-                "reason": f"Palette trop riche ({unique_colors_cnt} couleurs > {self.max_colors}), illustration lisse ou photo"
+                "reason": f"Palette trop riche ({unique_colors_cnt} couleurs > {self.max_colors}), illustration lisse",
+                "original_size": (orig_w, orig_h)
             }
             
         result_img = Image.fromarray(cleaned_array)
@@ -448,15 +349,16 @@ class PixelReconstructor:
             "original_size": (orig_w, orig_h),
             "clean_size": (new_w, new_h),
             "scale": scale,
+            "is_integer_scale": is_integer,
             "palette_size": unique_colors_cnt,
             "has_background_removed": has_bg
         }
         
         return result_img, scale, stats
 
-    def reconstruct(self, img_input: Image.Image) -> Tuple[Optional[Image.Image], int, Dict[str, Any]]:
+    def reconstruct(self, img_input: Image.Image) -> Tuple[Optional[Image.Image], float, Dict[str, Any]]:
         """
-        Point d'entrée principal pour images statiques et GIFs animés.
+        Point d'entrée principal pour images statiques et GIFs.
         """
         is_animated = getattr(img_input, "is_animated", False) and getattr(img_input, "n_frames", 1) > 1
         
@@ -468,7 +370,7 @@ class PixelReconstructor:
         scales = []
         
         first_frame = True
-        detected_scale = 1
+        detected_scale = 1.0
         
         for frame in ImageSequence.Iterator(img_input):
             duration = frame.info.get('duration', 100)
@@ -476,7 +378,7 @@ class PixelReconstructor:
             
             clean_f, f_scale, stats = self.reconstruct_frame(frame)
             if clean_f is None:
-                return None, 1, stats
+                return None, 1.0, stats
                 
             if first_frame:
                 detected_scale = f_scale
@@ -486,7 +388,7 @@ class PixelReconstructor:
             scales.append(f_scale)
             
         if not frames:
-            return None, 1, {"rejected": True, "reason": "Aucune frame valide dans le GIF"}
+            return None, 1.0, {"rejected": True, "reason": "Aucune frame valide dans le GIF", "original_size": img_input.size}
             
         out_io = BytesIO()
         frames[0].save(
@@ -512,24 +414,3 @@ class PixelReconstructor:
         }
         
         return final_gif, detected_scale, overall_stats
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1:
-        filepath = sys.argv[1]
-        print(f"Inspection & Reconstruction de {filepath}...")
-        try:
-            raw = Image.open(filepath)
-            rec = PixelReconstructor(color_tolerance=15.0, remove_background=True, strict_mode=True)
-            res, sc, st = rec.reconstruct(raw)
-            if res:
-                out = filepath.rsplit(".", 1)[0] + "_cleaned.png"
-                res.save(out)
-                print(f"✅ VRAI PIXEL ART VALIDÉ ! Échelle: {sc}x | {st['original_size']} -> {st['clean_size']}")
-                print(f"Sauvegardé dans: {out}")
-            else:
-                print(f"❌ REJETÉ : {st.get('reason')}")
-        except Exception as e:
-            print(f"Erreur: {e}")
-    else:
-        print("Usage: python pixel_reconstructor.py <chemin_image>")
