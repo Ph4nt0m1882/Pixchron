@@ -42,3 +42,7 @@ scratch/
 *.tar
 *.db
 *.sqlite
+datasets_cleaned/
+datasets_cleaned_anomalies/
+datasets_quarantine/
+temp*
