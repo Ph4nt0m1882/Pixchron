@@ -4,8 +4,9 @@ PIXCHRON - MATCH OR PASS : INTERFACE WEB ULTRA-RAPIDE DE REVUE PIXEL ART
 
 Fonctionnalités :
 - Démarrage instantané (0.1s).
-- Affichage centré avec zoom fluide et grille fine séparant chaque pixel individuel.
+- Affichage centré avec zoom fluide (1x, 2x, 3x...) et grille fine séparant chaque pixel individuel.
 - Fond damier transparent discret pour visualiser l'Alpha.
+- Défilement fluide sans bug de coupure de scroll (margin: auto sur canevas).
 - Barre d'espace / Flèche droite : Valider (Keep / Match).
 - Bouton Rouge / Flèche bas / Suppr : Rejeter (Envoyer en quarantaine).
 - Flèche gauche / Touche Z : Précédent (Annuler le rejet/découpage et restaurer le fichier).
@@ -15,6 +16,10 @@ Fonctionnalités :
   • Bouton ⚡ Cadres Auto (Touche A) : Détection automatique des sprites par composantes connexes.
   • Bouton ✂️ DÉCOUPER (Touche C ou Entrée) : Découpe 1:1, sauvegarde _crop_01.png, etc., archive l'original.
   • Touche Échap : Effacer les cadres.
+- Persistance & Reprise de Session :
+  • Sauvegarde automatique de progression dans le navigateur (localStorage).
+  • Champ direct "Aller au n° [ X ]" pour sauter à n'importe quelle image instantanément.
+  • Argument CLI --index pour démarrer directement à un rang précis.
 - Raccourci 'G' : Afficher/Masquer la grille de pixels.
 - Zéro dépendance externe (tourne avec le serveur HTTP standard de Python).
 
@@ -76,7 +81,7 @@ HTML_PAGE = """<!DOCTYPE html>
         header {
             background: var(--panel);
             border-bottom: 1px solid var(--border);
-            padding: 10px 24px;
+            padding: 8px 24px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -108,6 +113,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
         .stats {
             display: flex;
+            align-items: center;
             gap: 16px;
             font-size: 14px;
         }
@@ -126,6 +132,23 @@ HTML_PAGE = """<!DOCTYPE html>
         .val-red { color: var(--accent-red); }
         .val-cyan { color: var(--accent-cyan); }
 
+        .jump-input {
+            width: 72px;
+            background: #222634;
+            border: 1px solid var(--border);
+            color: #fff;
+            border-radius: 6px;
+            padding: 3px 6px;
+            font-weight: 700;
+            text-align: center;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+        .jump-input:focus {
+            border-color: var(--accent-blue);
+        }
+
         /* Conteneur principal */
         main {
             flex: 1;
@@ -134,7 +157,7 @@ HTML_PAGE = """<!DOCTYPE html>
             align-items: center;
             justify-content: center;
             position: relative;
-            padding: 12px 20px;
+            padding: 10px 20px;
         }
 
         /* Métadonnées de l'image */
@@ -158,7 +181,7 @@ HTML_PAGE = """<!DOCTYPE html>
         .meta-label { color: var(--text-dim); }
         .meta-val { font-weight: 600; color: #fff; }
 
-        /* Visualiseur Canvas */
+        /* Visualiseur Canvas sans bug de coupure de scroll */
         .viewport {
             background-color: #161922;
             background-image: 
@@ -172,11 +195,9 @@ HTML_PAGE = """<!DOCTYPE html>
             border-radius: 12px;
             box-shadow: 0 12px 36px rgba(0,0,0,0.5);
             display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 10px;
-            max-width: 85vw;
-            max-height: 52vh;
+            padding: 16px;
+            max-width: 90vw;
+            max-height: 56vh;
             overflow: auto;
             position: relative;
         }
@@ -185,6 +206,7 @@ HTML_PAGE = """<!DOCTYPE html>
             display: block;
             image-rendering: pixelated;
             cursor: crosshair;
+            margin: auto; /* Centrage automatique quand petit, et scroll libre (0,0) quand grand ! */
         }
 
         /* Barre d'outils de découpage (Crop) */
@@ -197,7 +219,7 @@ HTML_PAGE = """<!DOCTYPE html>
             padding: 6px 16px;
             border-radius: 20px;
             border: 1px solid var(--border);
-            max-width: 85vw;
+            max-width: 90vw;
             flex-wrap: wrap;
             justify-content: center;
         }
@@ -438,6 +460,10 @@ HTML_PAGE = """<!DOCTYPE html>
                 <span class="stat-val" id="progressText">0 / 0</span>
             </div>
             <div class="stat-item">
+                <span>Aller au n° :</span>
+                <input type="number" id="jumpInput" class="jump-input" min="1" title="Entrez un numéro d'image et appuyez sur Entrée">
+            </div>
+            <div class="stat-item">
                 <span>Conservés :</span>
                 <span class="stat-val val-green" id="keptCount">0</span>
             </div>
@@ -547,6 +573,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const cropCountBadge = document.getElementById("cropCountBadge");
         const boxChips = document.getElementById("boxChips");
         const cropHint = document.getElementById("cropHint");
+        const jumpInput = document.getElementById("jumpInput");
 
         function showToast(msg) {
             toast.textContent = msg;
@@ -564,6 +591,26 @@ HTML_PAGE = """<!DOCTYPE html>
                     alert("Aucune image trouvée dans le répertoire !");
                     return;
                 }
+
+                // Détermination de l'index de départ
+                let startIdx = 0;
+                if (data.initial_index !== null && data.initial_index !== undefined) {
+                    startIdx = data.initial_index;
+                } else {
+                    const savedFile = localStorage.getItem("pixchron_review_file");
+                    if (savedFile) {
+                        const found = imagesList.findIndex(x => x.rel_path === savedFile);
+                        if (found !== -1) {
+                            startIdx = found;
+                            kept = parseInt(localStorage.getItem("pixchron_kept") || "0", 10);
+                            rejected = parseInt(localStorage.getItem("pixchron_rejected") || "0", 10);
+                            croppedTotal = parseInt(localStorage.getItem("pixchron_cropped") || "0", 10);
+                            showToast(`Reprise automatique à l'image #${found + 1}`);
+                        }
+                    }
+                }
+
+                currentIndex = Math.max(0, Math.min(imagesList.length - 1, startIdx));
                 loadCurrentImage();
             } catch (err) {
                 console.error("Erreur init:", err);
@@ -593,9 +640,21 @@ HTML_PAGE = """<!DOCTYPE html>
             const progressPct = (currentIndex / imagesList.length) * 100;
             document.getElementById("progressFill").style.width = `${progressPct}%`;
             document.getElementById("progressText").textContent = `${currentIndex + 1} / ${imagesList.length}`;
+            jumpInput.value = currentIndex + 1;
+            jumpInput.max = imagesList.length;
+
             document.getElementById("keptCount").textContent = kept;
             document.getElementById("rejectedCount").textContent = rejected;
             document.getElementById("croppedCount").textContent = croppedTotal;
+
+            // Sauvegarde de l'état dans localStorage
+            try {
+                localStorage.setItem("pixchron_review_file", item.rel_path);
+                localStorage.setItem("pixchron_review_idx", currentIndex);
+                localStorage.setItem("pixchron_kept", kept);
+                localStorage.setItem("pixchron_rejected", rejected);
+                localStorage.setItem("pixchron_cropped", croppedTotal);
+            } catch (e) {}
 
             const img = new Image();
             img.src = `/api/image?path=${encodeURIComponent(item.rel_path)}&t=${Date.now()}`;
@@ -631,8 +690,8 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         function renderImage(img) {
-            const maxViewW = Math.min(window.innerWidth * 0.75, 650);
-            const maxViewH = Math.min(window.innerHeight * 0.46, 440);
+            const maxViewW = Math.min(window.innerWidth * 0.82, 850);
+            const maxViewH = Math.min(window.innerHeight * 0.50, 480);
 
             let zoom = manualZoom;
             if (zoom <= 0) {
@@ -1004,6 +1063,33 @@ HTML_PAGE = """<!DOCTYPE html>
             redrawCanvas();
         });
 
+        // Zoom molette souris avec touche Ctrl
+        canvas.addEventListener("wheel", (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                    manualZoom = (currentZoom || 2) + 1;
+                } else {
+                    manualZoom = Math.max(1, (currentZoom || 2) - 1);
+                }
+                if (currentLoadedImg) renderImage(currentLoadedImg);
+            }
+        }, { passive: false });
+
+        // Champ direct de saut d'image
+        jumpInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                const target = parseInt(jumpInput.value, 10) - 1;
+                if (!isNaN(target) && target >= 0 && target < imagesList.length) {
+                    currentIndex = target;
+                    manualZoom = 0;
+                    loadCurrentImage();
+                    showToast(`Saut à l'image #${target + 1}`);
+                }
+            }
+        });
+
         // Boutons
         document.getElementById("btnAccept").addEventListener("click", handleAccept);
         document.getElementById("btnReject").addEventListener("click", handleReject);
@@ -1014,6 +1100,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
         // Raccourcis Clavier
         window.addEventListener("keydown", (e) => {
+            // Ignorer les touches si le focus est dans le champ de saut
+            if (document.activeElement === jumpInput) return;
+
             if (e.code === "Space" || e.code === "ArrowRight") {
                 e.preventDefault();
                 handleAccept();
@@ -1039,10 +1128,10 @@ HTML_PAGE = """<!DOCTYPE html>
                 showToast(showGrid ? "Grille : ACTIVÉE" : "Grille : DÉSACTIVÉE");
                 redrawCanvas();
             } else if (e.key === "+" || e.key === "=") {
-                manualZoom = (currentZoom || 8) + 2;
+                manualZoom = (currentZoom || 2) + 1;
                 if (currentLoadedImg) renderImage(currentLoadedImg);
             } else if (e.key === "-" || e.key === "_") {
-                manualZoom = Math.max(2, (currentZoom || 8) - 2);
+                manualZoom = Math.max(1, (currentZoom || 2) - 1);
                 if (currentLoadedImg) renderImage(currentLoadedImg);
             }
         });
@@ -1106,6 +1195,7 @@ class ReviewServerHandler(BaseHTTPRequestHandler):
     input_dir = "./datasets_gold_pass1"
     quarantine_dir = "./datasets_purge_pass1"
     images_meta = []
+    initial_index = None
 
     def log_message(self, format, *args):
         pass
@@ -1126,7 +1216,8 @@ class ReviewServerHandler(BaseHTTPRequestHandler):
             data = {
                 "input_dir": self.input_dir,
                 "quarantine_dir": self.quarantine_dir,
-                "images": self.images_meta
+                "images": self.images_meta,
+                "initial_index": self.initial_index
             }
             self.wfile.write(json.dumps(data).encode("utf-8"))
             
@@ -1328,6 +1419,7 @@ def main():
     parser.add_argument("--dir", type=str, default="./datasets_gold_pass1", help="Répertoire à réviser (défaut: ./datasets_gold_pass1 ou ./datasets_cleaned)")
     parser.add_argument("--quarantine", type=str, default="./datasets_purge_pass1", help="Répertoire de quarantaine vers lequel déplacer les rejets")
     parser.add_argument("--port", type=int, default=7860, help="Port HTTP (défaut: 7860)")
+    parser.add_argument("--index", type=int, default=None, help="Numéro d'image de départ (1-indexed, ex: --index 516)")
 
     args = parser.parse_args()
 
@@ -1341,13 +1433,16 @@ def main():
     ReviewServerHandler.input_dir = args.dir
     ReviewServerHandler.quarantine_dir = args.quarantine
     ReviewServerHandler.images_meta = images_meta
+    ReviewServerHandler.initial_index = (args.index - 1) if (args.index and args.index > 0) else None
 
     server = HTTPServer(("0.0.0.0", args.port), ReviewServerHandler)
     print("=" * 75)
-    print("  🎮 PIXCHRON - MATCH OR PASS REVIEWER AVEC DÉCOUPAGE PRÊT !")
+    print("  🎮 PIXCHRON - MATCH OR PASS REVIEWER PRÊT !")
     print("=" * 75)
     print(f"  • Dossier revu       : {args.dir}")
     print(f"  • Dossier Quarantaine: {args.quarantine}")
+    if ReviewServerHandler.initial_index is not None:
+        print(f"  • Départ à l'image n°: {ReviewServerHandler.initial_index + 1} / {len(images_meta)}")
     print(f"  • Ouvrir dans le web : http://localhost:{args.port}")
     print("=" * 75)
     print("👉 Contrôles de Revue :")
@@ -1360,7 +1455,7 @@ def main():
     print("   [C] ou [ENTRÉE]  : ✂️ Découper les cadres actifs et archiver la planche")
     print("   [ÉCHAP]          : Effacer tous les cadres")
     print("   [G]              : Activer / Désactiver la grille de pixels")
-    print("   [+] / [-]        : Zoom avant / arrière")
+    print("   [+] / [-]        : Zoom avant / arrière (jusqu'à 1x)")
     print("=" * 75)
     print("Appuyez sur Ctrl+C pour arrêter le serveur.")
 
