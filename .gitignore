@@ -27,7 +27,7 @@ wandb/
 # Datasets and Cache
 .cache/
 data/
-datasets/
+datasets*/
 raw_data_part*
 datasets_ready/
 temp*.png
