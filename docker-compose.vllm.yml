@@ -20,8 +20,8 @@ services:
               count: all
               capabilities: [gpu]
     command: >
-      Qwen/Qwen2.5-VL-7B-Instruct
+      google/gemma-4-31B-it
       --dtype bfloat16
-      --gpu-memory-utilization 0.80
+      --gpu-memory-utilization 0.85
       --max-model-len 4096
       --trust-remote-code
